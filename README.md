@@ -25,6 +25,7 @@ Every non-draft PR gets two automated reviews:
 - **Claude Code Action** (`claude-review.yml`) — reads `CLAUDE.md`, posts one sticky verdict comment + inline defects. Auth: `CLAUDE_CODE_OAUTH_TOKEN` secret from `claude setup-token` (Pro/Max subscription).
 - **CodeRabbit** — free on public repos, config in `.coderabbit.yaml`.
 Dependabot PRs are skipped by Claude (no secrets on those runs).
+CodeRabbit only auto-reviews repos with 10+ stars; below that, comment `@coderabbitai review` on the PR to trigger it.
 
 ### First-time bootstrap runbook
 
@@ -48,4 +49,4 @@ Bootstrap is the one Terraform module applied from a laptop, once, because CI ca
 5. Open a PR touching `infra/aws/` → plan appears as a PR comment. Merge.
 6. Actions → `infra-aws` → Run workflow with `action=apply` → approve the `prod` deployment → resources created. If it fails on the Bedrock logging configuration with an IAM validation error, re-run the apply once (IAM propagation).
 
-Runtime credentials for Ned are in SSM: `/ned/runtime/aws_access_key_id`, `/ned/runtime/aws_secret_access_key` (SecureString). The deploy job reads them; humans do not need to.
+Runtime credentials for Ned are in SSM: `/ned/runtime/aws_access_key_id`, `/ned/runtime/aws_secret_access_key` (SecureString). They are reserved for the Phase 8 deploy job; nothing reads them yet.
