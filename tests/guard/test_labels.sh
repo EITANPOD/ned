@@ -10,10 +10,28 @@ with_fake_gh() {
   cat > "$bin/gh" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FAKE_GH_LOG"
+jq_query() { # the program gh was given with -q/--jq
+  local prev=""
+  for a in "$@"; do
+    if [ "$prev" = -q ] || [ "$prev" = --jq ]; then printf '%s' "$a"; return; fi
+    prev="$a"
+  done
+}
 case "$*" in
   "label list"*)     printf '%s\n' tier:low tier:medium tier:high needs-human human-approved allow-destroy ;;
   *"--json labels"*) printf '%s\n' ${FAKE_PR_LABELS:-} ;;  # unquoted: one label per line
-  *"/events"*)       [ -z "${FAKE_EVENT_ACTOR:-}" ] || printf '%s 2026-09-18T12:00:00Z\n' "$FAKE_EVENT_ACTOR" ;;
+  *"/events"*)
+    # The real call must page and slurp, or the last 'labeled' event can be on a page we never read.
+    case "$*" in *--paginate*--slurp*|*--slurp*--paginate*) ;;
+      *) echo "fake gh: /events called without --paginate --slurp: $*" >&2; exit 99 ;;
+    esac
+    # --slurp shape: one array per page. The newest matching event is on the last page.
+    jq -n --arg a "${FAKE_EVENT_ACTOR:-}" '
+      if $a == "" then [[], []]
+      else [[{event:"labeled",label:{name:"human-approved"},actor:{login:"stale-admin"},created_at:"2026-09-17T09:00:00Z"}],
+            [{event:"commented",actor:{login:"bob"},created_at:"2026-09-18T11:00:00Z"},
+             {event:"labeled",label:{name:"human-approved"},actor:{login:$a},created_at:"2026-09-18T12:00:00Z"}]]
+      end' | jq -r "$(jq_query "$@")" ;;
   *"/permission"*)   printf '%s\n' "${FAKE_PERM:-write}" ;;
 esac
 exit 0
