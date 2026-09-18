@@ -15,7 +15,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: infra-aws
+  # Per PR, so PRs do not serialize behind each other; every dispatch still shares one lane.
+  group: infra-aws-${{ github.event.pull_request.number || 'dispatch' }}
   cancel-in-progress: false
 
 env:

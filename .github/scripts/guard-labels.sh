@@ -43,7 +43,7 @@ check() { # check <label> → prints true/false; strips an invalid label. Only t
     if valid_label "$1"; then echo true; return; fi
     gh pr edit "$PR" -R "$REPO" --remove-label "$1" >/dev/null
     gh pr comment "$PR" -R "$REPO" \
-      --body "guard: removed label \`$1\` — it must be added by a repo admin (not a bot, not an automation)." >/dev/null
+      --body "guard: removed label \`$1\` — it must be added by a repo admin (not a bot)." >/dev/null
   fi
   echo false
 }

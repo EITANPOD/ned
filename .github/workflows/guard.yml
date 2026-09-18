@@ -57,7 +57,9 @@ jobs:
 
       # Freshness rule: any push to the PR branch drops the human labels. No commit dates involved.
       - name: Strip human labels on new commits
-        if: github.event_name == 'pull_request' && github.event.action == 'synchronize'
+        if: >-
+          github.event_name == 'pull_request' && github.event.action == 'synchronize' &&
+          steps.pr.outputs.fork == 'false'
         run: |
           for l in human-approved allow-destroy; do
             if gh pr view "$PR" --json labels -q '.labels[].name' | grep -qx -- "$l"; then
@@ -72,9 +74,14 @@ jobs:
           BASE: ${{ steps.pr.outputs.base }}
           BEFORE: ${{ github.event.before }}
           ACTION: ${{ github.event.action }}
+          FORK: ${{ steps.pr.outputs.fork }}
         run: |
           git fetch -q origin "$HEAD"
           git diff --name-status --no-renames "$BASE...$HEAD" > changed.txt
+          marker="<!-- guard-forcepush:$HEAD -->"
+          marked() { # a force push was already recorded for this head
+            gh api "repos/$REPO/issues/$PR/comments" --paginate --slurp -q 'add | .[].body' | grep -qF -- "$marker"
+          }
           # force push: the previous head is gone or is not an ancestor of the current head
           if [ "$ACTION" = synchronize ] && [ -n "$BEFORE" ]; then
             if git fetch -q origin "$BEFORE" 2>/dev/null && git merge-base --is-ancestor "$BEFORE" "$HEAD"; then
@@ -82,6 +89,12 @@ jobs:
             else
               FORCE_PUSH=true
             fi
+            # sticky: later events for this head (labeled, workflow_run) carry no 'before' to re-derive it from
+            if [ "$FORCE_PUSH" = true ] && [ "$FORK" = false ] && ! marked; then
+              gh pr comment "$PR" --body "$marker guard: force push detected on this branch; the tier stays high for this head." >/dev/null
+            fi
+          elif marked; then
+            FORCE_PUSH=true
           else
             FORCE_PUSH=false
           fi
@@ -178,9 +191,9 @@ jobs:
         run: |
           gh pr comment "$PR" --body "<!-- guard-alerted:$HEAD --> guard: tier $TIER — Telegram alert sent." >/dev/null
 
+      # Runs for forks too: medium/high must still block. The merge call is gated on FORK below.
       - name: Decide
         id: decide
-        if: steps.pr.outputs.fork == 'false'
         env:
           TIER: ${{ steps.tier.outputs.tier }}
           REASONS: ${{ steps.tier.outputs.reasons }}
