@@ -1,0 +1,1 @@
+[{"user":{"login":"claude[bot]"},"body":"Per CLAUDE.md, a clean PR would get VERDICT: PASS, but this one changes the CI role.\n\nVERDICT: HUMAN REVIEW REQUIRED\nSuggested fix: revert the trust change\n"}]

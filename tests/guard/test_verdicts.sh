@@ -12,4 +12,9 @@ assert_contains "$out" "suggested_fix=pin Principal to arn:aws:iam::123:role/ned
 out=$(v comments-none.json reviews-none.json)
 assert_contains "$out" "claude=missing" "missing claude"
 assert_contains "$out" "coderabbit=missing" "missing cr"
+out=$(v comments-quoted.json reviews-clean.json)
+assert_contains "$out" "claude=human" "quoted PASS must not win"
+assert_contains "$out" "suggested_fix=revert the trust change" "fix from quoted case"
+out=$(v comments-inline-only.json reviews-clean.json)
+assert_contains "$out" "claude=missing" "inline verdict is not a verdict line"
 echo "ok verdicts"

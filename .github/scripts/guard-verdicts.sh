@@ -2,10 +2,12 @@
 # Parse reviewer verdicts. Env: COMMENTS_JSON, REVIEWS_JSON (file paths). Prints claude=, coderabbit=, suggested_fix=.
 set -euo pipefail
 claude_body=$(jq -r '[.[] | select(.user.login | test("^claude(\\[bot\\])?$"))] | last | .body // ""' "$COMMENTS_JSON")
+verdict_line=$(printf '%s\n' "$claude_body" | tr -d '\r' | grep -E '^[[:space:]]*VERDICT: (PASS|HUMAN REVIEW REQUIRED)[[:space:]]*$' | tail -1 || true)
 claude=missing
-case "$claude_body" in
-  *"VERDICT: PASS"*) claude=pass;;
-  *"VERDICT: HUMAN REVIEW REQUIRED"*) claude=human;;
+case "$verdict_line" in
+  *"HUMAN REVIEW REQUIRED"*) claude=human;;
+  *"PASS"*) claude=pass;;
+  *) claude=missing;;
 esac
 fix=$(printf '%s\n' "$claude_body" | sed -n 's/^Suggested fix: *//p' | head -1)
 
