@@ -2,6 +2,8 @@ data "aws_caller_identity" "current" {}
 
 # --- Terraform remote state -------------------------------------------------
 
+# trivy:ignore:AVD-AWS-0132 state bucket uses SSE-S3 (AES256); a customer-managed KMS key is not worth $1/mo for a single-user project
+#trivy:ignore:AVD-AWS-0132
 resource "aws_s3_bucket" "state" {
   bucket = var.state_bucket_name
 }
@@ -14,6 +16,7 @@ resource "aws_s3_bucket_versioning" "state" {
   }
 }
 
+# trivy:ignore:AVD-AWS-0132
 resource "aws_s3_bucket_server_side_encryption_configuration" "state" {
   bucket = aws_s3_bucket.state.id
 
