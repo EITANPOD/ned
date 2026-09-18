@@ -48,6 +48,26 @@ resource "aws_s3_bucket_lifecycle_configuration" "state" {
     expiration {
       days = 1
     }
+
+    # Bucket is versioned: `expiration` only writes a delete marker, so the
+    # stashed plan would live on as a noncurrent version.
+    noncurrent_version_expiration {
+      noncurrent_days = 1
+    }
+  }
+
+  # AWS rejects `days` and `expired_object_delete_marker` in one expiration block.
+  rule {
+    id     = "purge-plan-delete-markers"
+    status = "Enabled"
+
+    filter {
+      prefix = "plans/"
+    }
+
+    expiration {
+      expired_object_delete_marker = true
+    }
   }
 }
 

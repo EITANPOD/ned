@@ -89,6 +89,16 @@ locals {
         Resource = "*"
       },
       {
+        # policy/ned-* above would otherwise let CI rewrite the boundary itself.
+        Sid    = "DenyBoundaryPolicyEdits"
+        Effect = "Deny"
+        Action = [
+          "iam:CreatePolicyVersion", "iam:DeletePolicyVersion", "iam:SetDefaultPolicyVersion",
+          "iam:DeletePolicy", "iam:TagPolicy", "iam:UntagPolicy",
+        ]
+        Resource = aws_iam_policy.boundary.arn
+      },
+      {
         Sid    = "Budgets"
         Effect = "Allow"
         Action = [

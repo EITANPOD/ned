@@ -93,7 +93,7 @@ jobs:
           [ "$code" -ne 1 ]
       - uses: actions/upload-artifact@v7
         with:
-          name: tfplan
+          name: plan-text
           path: infra/aws/plan.txt
           retention-days: 5
       # tfplan embeds prior state (incl. sensitive values); never publish it as an artifact on a public repo.

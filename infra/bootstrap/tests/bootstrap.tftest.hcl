@@ -58,6 +58,10 @@ run "ci_role_cannot_modify_itself" {
     condition     = length([for s in jsondecode(aws_iam_role_policy.ci.policy).Statement : s if s.Effect == "Deny" && s.Sid == "DenyBoundaryRemoval"]) == 1
     error_message = "CI role policy must deny removing permissions boundaries"
   }
+  assert {
+    condition     = length([for s in jsondecode(aws_iam_role_policy.ci.policy).Statement : s if s.Effect == "Deny" && s.Sid == "DenyBoundaryPolicyEdits" && contains(s.Action, "iam:CreatePolicyVersion")]) == 1
+    error_message = "CI role must be denied editing the permissions boundary policy"
+  }
 }
 
 run "ci_role_requires_boundary_on_create" {
@@ -83,5 +87,14 @@ run "boundary_policy_named" {
   assert {
     condition     = aws_iam_policy.boundary.name == "ned-permissions-boundary"
     error_message = "boundary policy must be ned-permissions-boundary"
+  }
+}
+
+run "plan_objects_fully_expire" {
+  command = apply
+
+  assert {
+    condition     = length([for r in aws_s3_bucket_lifecycle_configuration.state.rule : r if r.id == "expire-plans" && length(r.noncurrent_version_expiration) == 1]) == 1
+    error_message = "expire-plans must expire noncurrent versions too (bucket is versioned)"
   }
 }
