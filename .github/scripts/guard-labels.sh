@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# Manage guard labels on a PR. Env: REPO PR HEAD_SHA TIER. Prints approved= and destroy_ok=.
+# Manage guard labels on a PR. Env: REPO PR TIER. Prints approved= and destroy_ok=.
+# Label freshness (new commits invalidate human labels) is enforced by guard.yml, not here.
 set -euo pipefail
-: "${REPO:?}" "${PR:?}" "${HEAD_SHA:?}" "${TIER:?}"
+: "${REPO:?}" "${PR:?}" "${TIER:?}"
 
-ensure() { gh label create "$1" --color "$2" --description "$3" --force -R "$REPO" >/dev/null; }
+existing=$(gh label list -R "$REPO" --limit 200 --json name -q '.[].name')
+ensure() { # ensure <name> <color> <description>
+  grep -qx -- "$1" <<<"$existing" || gh label create "$1" --color "$2" --description "$3" -R "$REPO" >/dev/null
+}
 ensure tier:low 0e8a16 "guard: auto-mergeable"
 ensure tier:medium fbca04 "guard: needs human-approved label"
 ensure tier:high b60205 "guard: blocked; needs human-approved (+ allow-destroy)"
@@ -13,29 +17,33 @@ ensure allow-destroy 5319e7 "human: terraform destroys in this PR are intended"
 
 current=$(gh pr view "$PR" -R "$REPO" --json labels -q '.labels[].name')
 for l in tier:low tier:medium tier:high; do
-  if grep -qx "$l" <<<"$current" && [ "$l" != "tier:$TIER" ]; then gh pr edit "$PR" -R "$REPO" --remove-label "$l"; fi
+  if grep -qx -- "$l" <<<"$current" && [ "$l" != "tier:$TIER" ]; then
+    gh pr edit "$PR" -R "$REPO" --remove-label "$l" >/dev/null
+  fi
 done
-grep -qx "tier:$TIER" <<<"$current" || gh pr edit "$PR" -R "$REPO" --add-label "tier:$TIER"
+grep -qx -- "tier:$TIER" <<<"$current" || gh pr edit "$PR" -R "$REPO" --add-label "tier:$TIER" >/dev/null
 if [ "$TIER" = low ]; then
-  grep -qx needs-human <<<"$current" && gh pr edit "$PR" -R "$REPO" --remove-label needs-human || true
+  if grep -qx -- needs-human <<<"$current"; then gh pr edit "$PR" -R "$REPO" --remove-label needs-human >/dev/null; fi
 else
-  grep -qx needs-human <<<"$current" || gh pr edit "$PR" -R "$REPO" --add-label needs-human
+  grep -qx -- needs-human <<<"$current" || gh pr edit "$PR" -R "$REPO" --add-label needs-human >/dev/null
 fi
 
-head_time=$(gh api "repos/$REPO/commits/$HEAD_SHA" -q .commit.committer.date)
-valid_label() { # valid_label <name> → 0 if last 'labeled' event for it is by an admin after head_time
-  local ev; ev=$(gh api "repos/$REPO/issues/$PR/events" --paginate -q "[.[] | select(.event==\"labeled\" and .label.name==\"$1\")] | last | \"\(.actor.login) \(.created_at)\"")
-  [ -n "$ev" ] && [ "$ev" != "null null" ] || return 1
-  local actor when; actor=${ev% *}; when=${ev#* }
+valid_label() { # valid_label <name> → 0 if the last 'labeled' event for it was added by a non-bot admin
+  local ev actor
+  ev=$(gh api "repos/$REPO/issues/$PR/events" --paginate --slurp \
+    -q "add | [.[] | select(.event==\"labeled\" and .label.name==\"$1\")] | last | select(.) | \"\(.actor.login) \(.created_at)\"")
+  [ -n "$ev" ] || return 1
+  actor=${ev%% *}
+  [ -n "$actor" ] || return 1
   [[ "$actor" != *"[bot]" ]] || return 1
-  [ "$(gh api "repos/$REPO/collaborators/$actor/permission" -q .permission)" = admin ] || return 1
-  [[ "$when" > "$head_time" ]]
+  [ "$(gh api "repos/$REPO/collaborators/$actor/permission" -q .permission)" = admin ]
 }
-check() { # check <label> → prints true/false; strips a stale/invalid label
-  if grep -qx "$1" <<<"$current"; then
+check() { # check <label> → prints true/false; strips an invalid label. Only true/false on stdout.
+  if grep -qx -- "$1" <<<"$current"; then
     if valid_label "$1"; then echo true; return; fi
-    gh pr edit "$PR" -R "$REPO" --remove-label "$1"
-    gh pr comment "$PR" -R "$REPO" --body "guard: removed label \`$1\` — it must be added by an admin after the current head commit ($HEAD_SHA)."
+    gh pr edit "$PR" -R "$REPO" --remove-label "$1" >/dev/null
+    gh pr comment "$PR" -R "$REPO" \
+      --body "guard: removed label \`$1\` — it must be added by a repo admin (not a bot, not an automation)." >/dev/null
   fi
   echo false
 }

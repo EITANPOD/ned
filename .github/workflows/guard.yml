@@ -14,8 +14,8 @@ permissions:
   actions: read
 
 concurrency:
-  group: guard-${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.run_id }}
-  cancel-in-progress: true
+  group: guard-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   guard:
@@ -31,25 +31,80 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
+      # Untrusted PR data never reaches a run: block through ${{ }}; it arrives via env:.
       - name: PR facts
         id: pr
         run: |
-          gh pr view "$PR" --json headRefOid,baseRefOid,title,author,isDraft,headRepository,url \
-            -q '"head=\(.headRefOid)\nbase=\(.baseRefOid)\ntitle=\(.title)\nactor=\(.author.login)\ndraft=\(.isDraft)\nfork=\(.headRepository.nameWithOwner != env.REPO)\nurl=\(.url)"' >> "$GITHUB_OUTPUT"
+          gh pr view "$PR" --json headRefOid,baseRefOid,headRefName,title,author,isDraft,isCrossRepository,url > pr.json
+          {
+            printf 'head=%s\n' "$(jq -r .headRefOid pr.json)"
+            printf 'base=%s\n' "$(jq -r .baseRefOid pr.json)"
+            printf 'branch=%s\n' "$(jq -r .headRefName pr.json)"
+            printf 'actor=%s\n' "$(jq -r .author.login pr.json)"
+            printf 'draft=%s\n' "$(jq -r .isDraft pr.json)"
+            printf 'fork=%s\n' "$(jq -r .isCrossRepository pr.json)"
+          } >> "$GITHUB_OUTPUT"
+          # title and url are free text: heredoc form with a random delimiter.
+          for f in title url; do
+            d=$(openssl rand -hex 8)
+            { echo "$f<<$d"; jq -r ".$f" pr.json; echo "$d"; } >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Fork PR note
+        if: steps.pr.outputs.fork == 'true'
+        run: |
+          echo "fork PR: guard reports tier only, no labels/merge" >> "$GITHUB_STEP_SUMMARY"
+
+      # Freshness rule: any push to the PR branch drops the human labels. No commit dates involved.
+      - name: Strip human labels on new commits
+        if: github.event_name == 'pull_request' && github.event.action == 'synchronize'
+        run: |
+          for l in human-approved allow-destroy; do
+            if gh pr view "$PR" --json labels -q '.labels[].name' | grep -qx -- "$l"; then
+              gh pr edit "$PR" --remove-label "$l" >/dev/null
+              gh pr comment "$PR" --body "guard: removed label \`$l\` because new commits were pushed. Re-add it after reviewing the current head." >/dev/null
+            fi
+          done
 
       - name: Changed files (name-status)
+        env:
+          HEAD: ${{ steps.pr.outputs.head }}
+          BASE: ${{ steps.pr.outputs.base }}
+          BEFORE: ${{ github.event.before }}
+          ACTION: ${{ github.event.action }}
         run: |
-          git fetch -q origin "${{ steps.pr.outputs.head }}"
-          git diff --name-status "${{ steps.pr.outputs.base }}...${{ steps.pr.outputs.head }}" > changed.txt
-          # force push: previous head (from PR timeline) not an ancestor of current head
-          prev=$(gh api "repos/$REPO/pulls/$PR/commits" -q 'if length>1 then .[-2].sha else empty end')
-          if [ -n "$prev" ] && ! git merge-base --is-ancestor "$prev" "${{ steps.pr.outputs.head }}"; then echo "FORCE_PUSH=true" >> "$GITHUB_ENV"; else echo "FORCE_PUSH=false" >> "$GITHUB_ENV"; fi
+          git fetch -q origin "$HEAD"
+          git diff --name-status --no-renames "$BASE...$HEAD" > changed.txt
+          # force push: the previous head is gone or is not an ancestor of the current head
+          if [ "$ACTION" = synchronize ] && [ -n "$BEFORE" ]; then
+            if git fetch -q origin "$BEFORE" 2>/dev/null && git merge-base --is-ancestor "$BEFORE" "$HEAD"; then
+              FORCE_PUSH=false
+            else
+              FORCE_PUSH=true
+            fi
+          else
+            FORCE_PUSH=false
+          fi
+          echo "FORCE_PUSH=$FORCE_PUSH" >> "$GITHUB_ENV"
 
       - name: Latest terraform plan text for this head (if any)
+        env:
+          HEAD: ${{ steps.pr.outputs.head }}
+          BRANCH: ${{ steps.pr.outputs.branch }}
         run: |
-          rid=$(gh run list --workflow=infra-aws.yml --json databaseId,headSha,status -q "[.[] | select(.headSha==\"${{ steps.pr.outputs.head }}\" and .status==\"completed\")] | first | .databaseId")
-          if [ -n "$rid" ] && [ "$rid" != null ]; then gh run download "$rid" -n plan-text -D plan || true; fi
-          [ -f plan/plan.txt ] && echo "PLAN_FILE=plan/plan.txt" >> "$GITHUB_ENV" || echo "PLAN_FILE=" >> "$GITHUB_ENV"
+          rid=$(gh run list --workflow=infra-aws.yml -b "$BRANCH" -L 100 --json databaseId,headSha,status \
+            | jq -r --arg h "$HEAD" '[.[] | select(.headSha == $h and .status == "completed")] | first | .databaseId // empty')
+          if [ -n "$rid" ]; then
+            gh run download "$rid" -n plan-text -D plan || true
+          else
+            # No completed infra-aws run for this head yet: the workflow_run re-trigger will alert with the real tier.
+            echo "SKIP_ALERT=1" >> "$GITHUB_ENV"
+          fi
+          if [ -f plan/plan.txt ]; then
+            echo "PLAN_FILE=plan/plan.txt" >> "$GITHUB_ENV"
+          else
+            echo "PLAN_FILE=" >> "$GITHUB_ENV"
+          fi
 
       - name: Classify
         id: tier
@@ -67,27 +122,41 @@ jobs:
 
       - name: Labels
         id: labels
+        if: steps.pr.outputs.fork == 'false'
         env:
-          HEAD_SHA: ${{ steps.pr.outputs.head }}
           TIER: ${{ steps.tier.outputs.tier }}
         run: bash .github/scripts/guard-labels.sh | tee -a "$GITHUB_OUTPUT"
 
       - name: Summary
+        env:
+          TIER: ${{ steps.tier.outputs.tier }}
+          REASONS: ${{ steps.tier.outputs.reasons }}
+          CLAUDE_V: ${{ steps.verdicts.outputs.claude }}
+          CR_V: ${{ steps.verdicts.outputs.coderabbit }}
+          APPROVED: ${{ steps.labels.outputs.approved }}
+          DESTROY_OK: ${{ steps.labels.outputs.destroy_ok }}
         run: |
           {
-            echo "## guard: tier **${{ steps.tier.outputs.tier }}**"
-            echo "- reasons: ${{ steps.tier.outputs.reasons }}"
-            echo "- claude: ${{ steps.verdicts.outputs.claude }} · coderabbit: ${{ steps.verdicts.outputs.coderabbit }}"
-            echo "- human-approved: ${{ steps.labels.outputs.approved }} · allow-destroy: ${{ steps.labels.outputs.destroy_ok }}"
+            echo "## guard: tier **$TIER**"
+            echo "- reasons: $REASONS"
+            echo "- claude: $CLAUDE_V · coderabbit: $CR_V"
+            echo "- human-approved: $APPROVED · allow-destroy: $DESTROY_OK"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Alert (medium/high, once per head)
-        if: steps.tier.outputs.tier != 'low'
+      - name: Alert check (medium/high, once per head)
+        if: >-
+          steps.pr.outputs.fork == 'false' && steps.tier.outputs.tier != 'low' &&
+          !(env.SKIP_ALERT == '1' && contains(steps.tier.outputs.reasons, 'no terraform plan available'))
+        env:
+          HEAD: ${{ steps.pr.outputs.head }}
         run: |
-          marker="<!-- guard-alerted:${{ steps.pr.outputs.head }} -->"
-          if gh pr view "$PR" --json comments -q '.comments[].body' | grep -qF "$marker"; then echo "already alerted"; exit 0; fi
-          gh pr comment "$PR" --body "$marker guard: tier ${{ steps.tier.outputs.tier }} — Telegram alert sent."
-          echo "ALERT=1" >> "$GITHUB_ENV"
+          marker="<!-- guard-alerted:$HEAD -->"
+          if gh pr view "$PR" --json comments -q '.comments[].body' | grep -qF -- "$marker"; then
+            echo "already alerted for this head"
+          else
+            echo "ALERT=1" >> "$GITHUB_ENV"
+          fi
+
       - uses: ./.github/actions/telegram-notify
         if: env.ALERT == '1'
         env:
@@ -101,29 +170,52 @@ jobs:
             Suggested fix: ${{ steps.verdicts.outputs.suggested_fix || 'n/a' }}
             <a href="${{ steps.pr.outputs.url }}">PR</a> · approve by adding label <code>human-approved</code>${{ contains(steps.tier.outputs.reasons, 'destroy') && ' + <code>allow-destroy</code>' || '' }}
 
-      - name: Decide
+      - name: Mark alerted
+        if: env.ALERT == '1'
+        env:
+          HEAD: ${{ steps.pr.outputs.head }}
+          TIER: ${{ steps.tier.outputs.tier }}
         run: |
-          tier=${{ steps.tier.outputs.tier }}
-          clean=false
-          [ "${{ steps.verdicts.outputs.claude }}" = pass ] && [ "${{ steps.verdicts.outputs.coderabbit }}" = clean ] && clean=true
-          case "$tier" in
+          gh pr comment "$PR" --body "<!-- guard-alerted:$HEAD --> guard: tier $TIER — Telegram alert sent." >/dev/null
+
+      - name: Decide
+        id: decide
+        if: steps.pr.outputs.fork == 'false'
+        env:
+          TIER: ${{ steps.tier.outputs.tier }}
+          REASONS: ${{ steps.tier.outputs.reasons }}
+          CLAUDE_V: ${{ steps.verdicts.outputs.claude }}
+          CR_V: ${{ steps.verdicts.outputs.coderabbit }}
+          APPROVED: ${{ steps.labels.outputs.approved }}
+          DESTROY_OK: ${{ steps.labels.outputs.destroy_ok }}
+          DRAFT: ${{ steps.pr.outputs.draft }}
+          FORK: ${{ steps.pr.outputs.fork }}
+        run: |
+          armed=false
+          if [ "$CLAUDE_V" = pass ] && [ "$CR_V" = clean ]; then clean=true; else clean=false; fi
+          case "$TIER" in
             low)
-              if [ "$clean" = true ] && [ "${{ steps.pr.outputs.draft }}" = false ] && [ "${{ steps.pr.outputs.fork }}" = false ]; then
-                gh pr merge "$PR" --auto --squash && echo "auto-merge armed"
+              if [ "$clean" = true ] && [ "$DRAFT" = false ] && [ "$FORK" = false ]; then
+                gh pr merge "$PR" --auto --squash >/dev/null
+                armed=true
+                echo "auto-merge armed"
               else
                 echo "low tier but not clean/draft/fork — waiting (no block)"
               fi ;;
             medium)
-              [ "${{ steps.labels.outputs.approved }}" = true ] || { echo "::error::medium tier: add label human-approved"; exit 1; } ;;
+              [ "$APPROVED" = true ] || { echo "::error::medium tier: add label human-approved"; exit 1; } ;;
             high)
-              [ "${{ steps.labels.outputs.approved }}" = true ] || { echo "::error::high tier: add label human-approved"; exit 1; }
-              if echo "${{ steps.tier.outputs.reasons }}" | grep -q destroy; then
-                [ "${{ steps.labels.outputs.destroy_ok }}" = true ] || { echo "::error::plan destroys resources: add label allow-destroy"; exit 1; }
+              [ "$APPROVED" = true ] || { echo "::error::high tier: add label human-approved"; exit 1; }
+              if grep -qF -- "destroy" <<<"$REASONS"; then
+                [ "$DESTROY_OK" = true ] || { echo "::error::plan destroys resources: add label allow-destroy"; exit 1; }
               fi ;;
+            *)
+              echo "::error::unknown tier $TIER"; exit 1 ;;
           esac
+          echo "armed=$armed" >> "$GITHUB_OUTPUT"
 
       - uses: ./.github/actions/telegram-notify
-        if: steps.tier.outputs.tier == 'low' && success()
+        if: steps.decide.outputs.armed == 'true'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

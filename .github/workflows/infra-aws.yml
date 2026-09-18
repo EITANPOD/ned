@@ -1,10 +1,8 @@
 name: infra-aws
 
 on:
+  # No paths filter: `check` is a required status check, so it must report on every PR.
   pull_request:
-    paths:
-      - "infra/aws/**"
-      - ".github/workflows/infra-aws.yml"
   workflow_dispatch:
     inputs:
       action:
@@ -125,7 +123,7 @@ jobs:
         with:
           message: "⏳ infra/aws apply is waiting for your <b>prod</b> approval — <a href=\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\">approve</a>"
       - name: Comment plan on PR
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && steps.plan.outputs.exitcode == '2'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
