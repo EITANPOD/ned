@@ -132,19 +132,21 @@ jobs:
             echo "PLAN_FILE=" >> "$GITHUB_ENV"
           fi
 
-      - name: Classify
-        id: tier
-        env:
-          PR_TITLE: ${{ steps.pr.outputs.title }}
-          PR_ACTOR: ${{ steps.pr.outputs.actor }}
-        run: bash .github/scripts/guard-tier.sh < changed.txt | tee -a "$GITHUB_OUTPUT"
-
       - name: Verdicts
         id: verdicts
         env:
           HEAD_SHA: ${{ steps.pr.outputs.head }}
           HEAD_TIME: ${{ steps.pr.outputs.head_time }}
         run: COMMENTS_JSON=comments.json REVIEWS_JSON=reviews.json bash .github/scripts/guard-verdicts.sh | tee -a "$GITHUB_OUTPUT"
+
+      # Verdicts first: a HUMAN REVIEW REQUIRED verdict raises the tier.
+      - name: Classify
+        id: tier
+        env:
+          PR_TITLE: ${{ steps.pr.outputs.title }}
+          PR_ACTOR: ${{ steps.pr.outputs.actor }}
+          CLAUDE_VERDICT: ${{ steps.verdicts.outputs.claude }}
+        run: bash .github/scripts/guard-tier.sh < changed.txt | tee -a "$GITHUB_OUTPUT"
 
       - name: Labels
         id: labels
@@ -194,7 +196,7 @@ jobs:
             Why: ${{ steps.tier.outputs.reasons }}
             Reviewers: claude=${{ steps.verdicts.outputs.claude }}, coderabbit=${{ steps.verdicts.outputs.coderabbit }}
             Suggested fix: ${{ steps.verdicts.outputs.suggested_fix || 'n/a' }}
-            <a href="${{ steps.pr.outputs.url }}">PR</a> · approve by adding label <code>human-approved</code>${{ contains(steps.tier.outputs.reasons, 'destroy') && ' + <code>allow-destroy</code>' || '' }}
+            <a href="${{ steps.pr.outputs.url }}">PR</a> · approve by adding label <code>human-approved</code>${{ steps.tier.outputs.destroys != '0' && ' + <code>allow-destroy</code>' || '' }}
 
       - name: Mark alerted
         if: env.ALERT == '1'
@@ -208,43 +210,67 @@ jobs:
       - name: Decide
         id: decide
         env:
+          EVENT: ${{ github.event_name }}
           TIER: ${{ steps.tier.outputs.tier }}
-          REASONS: ${{ steps.tier.outputs.reasons }}
+          DESTROYS: ${{ steps.tier.outputs.destroys }}
           CLAUDE_V: ${{ steps.verdicts.outputs.claude }}
           CR_V: ${{ steps.verdicts.outputs.coderabbit }}
+          ACTOR: ${{ steps.pr.outputs.actor }}
           APPROVED: ${{ steps.labels.outputs.approved }}
           DESTROY_OK: ${{ steps.labels.outputs.destroy_ok }}
           DRAFT: ${{ steps.pr.outputs.draft }}
           FORK: ${{ steps.pr.outputs.fork }}
         run: |
+          # Low is clean when Claude passed this head (Dependabot: Claude skipped by design) and CodeRabbit has
+          # no findings on this head. CodeRabbit 'missing' does not block: it needs a manual trigger on small repos.
+          clean=false
+          if { [ "$CLAUDE_V" = pass ] || [ "$ACTOR" = "dependabot[bot]" ]; } && [ "$CR_V" != findings ]; then clean=true; fi
           armed=false
-          if [ "$CLAUDE_V" = pass ] && [ "$CR_V" = clean ]; then clean=true; else clean=false; fi
+          if [ "$TIER" = low ] && [ "$clean" = true ] && [ "$DRAFT" = false ] && [ "$FORK" = false ]; then
+            gh pr merge "$PR" --auto --squash >/dev/null
+            armed=true
+            echo "auto-merge armed"
+          else
+            # anything armed for an earlier head (or by hand) must not merge this one; no-op when not armed
+            gh pr merge "$PR" --disable-auto >/dev/null 2>&1 || true
+            echo "auto-merge not armed (tier=$TIER clean=$clean draft=$DRAFT fork=$FORK)"
+          fi
+          echo "armed=$armed" >> "$GITHUB_OUTPUT"
+          # workflow_run runs execute on main, so their check lands on main's commit: report, never fail.
+          # The blocking check is the pull_request_target run on the PR head.
+          if [ "$EVENT" = workflow_run ]; then echo "workflow_run: report only"; exit 0; fi
           case "$TIER" in
-            low)
-              if [ "$clean" = true ] && [ "$DRAFT" = false ] && [ "$FORK" = false ]; then
-                gh pr merge "$PR" --auto --squash >/dev/null
-                armed=true
-                echo "auto-merge armed"
-              else
-                echo "low tier but not clean/draft/fork — waiting (no block)"
-              fi ;;
+            low) ;;
             medium)
               [ "$APPROVED" = true ] || { echo "::error::medium tier: add label human-approved"; exit 1; } ;;
             high)
               [ "$APPROVED" = true ] || { echo "::error::high tier: add label human-approved"; exit 1; }
-              if grep -qF -- "destroy" <<<"$REASONS"; then
+              if [ "${DESTROYS:-0}" -gt 0 ]; then
                 [ "$DESTROY_OK" = true ] || { echo "::error::plan destroys resources: add label allow-destroy"; exit 1; }
               fi ;;
             *)
               echo "::error::unknown tier $TIER"; exit 1 ;;
           esac
-          echo "armed=$armed" >> "$GITHUB_OUTPUT"
+
+      - name: Digest check (once per head)
+        if: steps.decide.outputs.armed == 'true'
+        env:
+          HEAD: ${{ steps.pr.outputs.head }}
+        run: |
+          bash .github/scripts/guard-marked.sh "<!-- guard-digest:$HEAD -->" || echo "DIGEST=1" >> "$GITHUB_ENV"
 
       - uses: ./.github/actions/telegram-notify
-        if: steps.decide.outputs.armed == 'true'
+        if: env.DIGEST == '1'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         with:
           silent: "true"
           message: "🟢 low | PR #${{ env.PR }} ${{ steps.pr.outputs.title }} — auto-merge armed (claude=${{ steps.verdicts.outputs.claude }}, coderabbit=${{ steps.verdicts.outputs.coderabbit }})"
+
+      - name: Mark digested
+        if: env.DIGEST == '1'
+        env:
+          HEAD: ${{ steps.pr.outputs.head }}
+        run: |
+          gh pr comment "$PR" --body "<!-- guard-digest:$HEAD --> guard: low tier, auto-merge armed — Telegram digest sent." >/dev/null

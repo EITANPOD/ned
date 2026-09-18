@@ -27,4 +27,13 @@ assert_eq high "$(t 'R100\tapps/old.py\tinfra/bootstrap/new.tf' PR_TITLE=x PR_AC
 assert_eq high "$(t 'R100\tinfra/aws/a.tf\tapps/a.tf' PR_TITLE=x PR_ACTOR=eitan PLAN_FILE=fixtures/plan-adds.txt FORCE_PUSH=false)" "rename out of infra is high"
 assert_eq low  "$(t 'R100\tapps/a.py\tapps/b.py' PR_TITLE=x PR_ACTOR=eitan PLAN_FILE= FORCE_PUSH=false)" "rename within apps is low"
 assert_eq high "$(t 'M\tCLAUDE.md\r\n' PR_TITLE=x PR_ACTOR=eitan PLAN_FILE= FORCE_PUSH=false)" "CRLF input still classifies"
+assert_eq high "$(t 'M\t.github/workflows/infra-aws.yml' PR_TITLE=x PR_ACTOR=eitan PLAN_FILE= FORCE_PUSH=false)" "plan-producing workflow is high"
+assert_eq high "$(t 'M\t.github/workflows/claude-review.yml' PR_TITLE=x PR_ACTOR=eitan PLAN_FILE= FORCE_PUSH=false)" "verdict-producing workflow is high"
+assert_eq medium "$(t 'M\tapps/x.py\nM\tdocs/a.md' PR_TITLE=x PR_ACTOR=eitan PLAN_FILE= FORCE_PUSH=false CLAUDE_VERDICT=human)" "human verdict escalates low to medium"
+assert_eq low "$(t 'M\tapps/x.py' PR_TITLE=x PR_ACTOR=eitan PLAN_FILE= FORCE_PUSH=false CLAUDE_VERDICT=pass)" "pass verdict keeps low"
+d() { run "$1" "${@:2}" | sed -n 's/^destroys=//p'; }
+assert_eq 1 "$(d 'M\tinfra/aws/iam.tf' PR_TITLE=x PR_ACTOR=eitan PLAN_FILE=fixtures/plan-destroy.txt FORCE_PUSH=false)" "destroys count printed"
+assert_eq 0 "$(d 'M\tinfra/aws/iam.tf' PR_TITLE=x PR_ACTOR=eitan PLAN_FILE=fixtures/plan-adds.txt FORCE_PUSH=false)" "zero destroys printed"
+assert_eq 0 "$(d 'M\tapps/x.py' PR_TITLE=x PR_ACTOR=eitan PLAN_FILE= FORCE_PUSH=false)" "non-infra prints destroys=0"
+assert_eq 2 "$(d 'M\tinfra/aws/iam.tf' PR_TITLE=x PR_ACTOR=eitan PLAN_FILE=fixtures/plan-destroy-forget.txt FORCE_PUSH=false)" "'to forget' plan line still counts destroys"
 echo "ok tier"
