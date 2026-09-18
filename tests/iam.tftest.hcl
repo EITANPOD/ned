@@ -1,9 +1,21 @@
 mock_provider "aws" {
-  # Real provider validates policy_arn is well-formed; the framework's synthetic
-  # computed value for aws_iam_policy.arn isn't, so pin it to a valid shape.
+  # Real provider validates *_arn attributes are well-formed; the framework's
+  # synthetic computed values aren't, so pin the ones referenced downstream.
   mock_resource "aws_iam_policy" {
     defaults = {
       arn = "arn:aws:iam::123456789012:policy/mock-policy"
+    }
+  }
+
+  mock_resource "aws_iam_role" {
+    defaults = {
+      arn = "arn:aws:iam::123456789012:role/mock-role"
+    }
+  }
+
+  mock_resource "aws_sns_topic" {
+    defaults = {
+      arn = "arn:aws:sns:us-east-1:123456789012:mock-topic"
     }
   }
 }
