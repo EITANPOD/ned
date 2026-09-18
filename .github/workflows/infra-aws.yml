@@ -82,10 +82,12 @@ jobs:
         with:
           terraform_version: "1.14.9"
           terraform_wrapper: false
-      - run: |
+      - env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+        run: |
           terraform init \
-            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
-            -backend-config="region=${{ vars.AWS_REGION }}"
+            -backend-config="bucket=$TF_STATE_BUCKET" \
+            -backend-config="region=$AWS_REGION"
       - id: plan
         run: |
           set +e
@@ -115,7 +117,11 @@ jobs:
       # tfplan embeds prior state (incl. sensitive values); never publish it as an artifact on a public repo.
       - name: Stash plan in state bucket (dispatch only)
         if: github.event_name == 'workflow_dispatch'
-        run: aws s3 cp tfplan "s3://${{ vars.TF_STATE_BUCKET }}/plans/${{ github.run_id }}.tfplan"
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          aws s3 cp tfplan "s3://$TF_STATE_BUCKET/plans/$RUN_ID.tfplan"
       - uses: ./.github/actions/telegram-notify
         if: github.event_name == 'workflow_dispatch' && inputs.action == 'apply' && steps.plan.outputs.exitcode == '2'
         env:
@@ -127,15 +133,17 @@ jobs:
         if: github.event_name == 'pull_request' && steps.plan.outputs.exitcode == '2'
         env:
           GH_TOKEN: ${{ github.token }}
+          EXITCODE: ${{ steps.plan.outputs.exitcode }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           {
-            echo "### terraform plan (infra/aws) — exit code ${{ steps.plan.outputs.exitcode }}"
+            echo "### terraform plan (infra/aws) — exit code $EXITCODE"
             echo
             echo '```'
             tail -c 60000 plan.txt
             echo '```'
           } > comment.md
-          gh pr comment ${{ github.event.pull_request.number }} --body-file comment.md --edit-last --create-if-none
+          gh pr comment "$PR_NUMBER" --body-file comment.md --edit-last --create-if-none
 
   apply:
     if: github.event_name == 'workflow_dispatch' && inputs.action == 'apply' && needs.plan.outputs.exitcode == '2'
@@ -160,12 +168,18 @@ jobs:
         with:
           terraform_version: "1.14.9"
           terraform_wrapper: false
-      - run: |
+      - env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+        run: |
           terraform init \
-            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
-            -backend-config="region=${{ vars.AWS_REGION }}"
+            -backend-config="bucket=$TF_STATE_BUCKET" \
+            -backend-config="region=$AWS_REGION"
       - name: Fetch plan from state bucket
-        run: aws s3 cp "s3://${{ vars.TF_STATE_BUCKET }}/plans/${{ github.run_id }}.tfplan" tfplan
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          aws s3 cp "s3://$TF_STATE_BUCKET/plans/$RUN_ID.tfplan" tfplan
       - run: terraform apply -input=false tfplan
       - run: terraform output >> "$GITHUB_STEP_SUMMARY"
       - uses: ./.github/actions/telegram-notify
