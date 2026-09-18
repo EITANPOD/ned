@@ -8,9 +8,9 @@ terraform {
     }
   }
 
-  # Partial config: bucket/region passed via -backend-config in CI.
-  # First bootstrap run uses `terraform init -backend=false` (local state),
-  # then migrates into this backend.
+  # Partial config: bucket/region passed via -backend-config.
+  # One-time local bootstrap: apply with a temporary `zz_local_override.tf`
+  # (backend "local"), delete it, then `terraform init -migrate-state`.
   backend "s3" {
     key          = "bootstrap/terraform.tfstate"
     encrypt      = true
