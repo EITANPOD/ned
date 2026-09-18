@@ -8,8 +8,15 @@ bump() { # bump <level> <reason>
 }
 
 touches_infra=false
-while IFS=$'\t' read -r status path || [ -n "${status:-}" ]; do
+while IFS=$'\t' read -r status path newpath || [ -n "${status:-}" ]; do
+  status=${status%$'\r'}; path=${path%$'\r'}; newpath=${newpath%$'\r'}
   [ -z "${path:-}" ] && continue
+  case "$status" in
+    R*|C*)
+      old=$path; path=$newpath
+      case "$old" in infra/*|.github/*) bump high "rename/copy out of protected path ($old)";; esac
+      ;;
+  esac
   case "$path" in
     infra/bootstrap/*) touches_infra=true; bump high "infra/bootstrap changed ($path)";;
     .github/workflows/guard.yml|.github/actions/*|.github/scripts/*) bump high "guard/notify tooling changed ($path)";;
@@ -21,7 +28,7 @@ while IFS=$'\t' read -r status path || [ -n "${status:-}" ]; do
     apps/*|docs/*|tests/*|README.md|.github/dependabot.yml) ;;   # low
     *) bump medium "unclassified path ($path)";;
   esac
-  case "$status" in D|R*) case "$path" in infra/*|.github/*) bump high "deletion under protected path ($path)";; esac;; esac
+  case "$status" in D) case "$path" in infra/*|.github/*) bump high "deletion under protected path ($path)";; esac;; esac
 done
 
 if [ "$touches_infra" = true ]; then

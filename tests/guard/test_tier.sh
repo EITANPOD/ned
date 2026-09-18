@@ -23,4 +23,8 @@ assert_eq high   "$(t 'M\tapps/x.py' PR_TITLE=x PR_ACTOR=eitan PLAN_FILE= FORCE_
 r=$(run 'M\tinfra/bootstrap/main.tf' PR_TITLE=x PR_ACTOR=eitan PLAN_FILE=fixtures/plan-destroy.txt FORCE_PUSH=false | sed -n 's/^reasons=//p')
 assert_contains "$r" "infra/bootstrap" "reason names bootstrap"
 assert_contains "$r" "destroy" "reason names destroy"
+assert_eq high "$(t 'R100\tapps/old.py\tinfra/bootstrap/new.tf' PR_TITLE=x PR_ACTOR=eitan PLAN_FILE=fixtures/plan-adds.txt FORCE_PUSH=false)" "rename into bootstrap is high"
+assert_eq high "$(t 'R100\tinfra/aws/a.tf\tapps/a.tf' PR_TITLE=x PR_ACTOR=eitan PLAN_FILE=fixtures/plan-adds.txt FORCE_PUSH=false)" "rename out of infra is high"
+assert_eq low  "$(t 'R100\tapps/a.py\tapps/b.py' PR_TITLE=x PR_ACTOR=eitan PLAN_FILE= FORCE_PUSH=false)" "rename within apps is low"
+assert_eq high "$(t 'M\tCLAUDE.md\r\n' PR_TITLE=x PR_ACTOR=eitan PLAN_FILE= FORCE_PUSH=false)" "CRLF input still classifies"
 echo "ok tier"
