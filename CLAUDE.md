@@ -26,7 +26,7 @@ Any of these in a PR means the verdict is `VERDICT: HUMAN REVIEW REQUIRED`, foll
 - workflow `permissions` widen, an action loses its version pin, or a required check is removed
 - tests are deleted or weakened; a check is disabled
 - terraform plan destroys anything
-- changes to `.github/workflows/guard.yml`, `.github/actions/**`, `.github/scripts/**`, `.claude/**`, `CLAUDE.md`, `.coderabbit.yaml`
+- changes to `.github/workflows/guard.yml`, `.github/workflows/infra-aws.yml`, `.github/workflows/claude-review.yml`, `.github/actions/**`, `.github/scripts/**`, `.claude/**`, `CLAUDE.md`, `.coderabbit.yaml`
 Otherwise end the review with `VERDICT: PASS`. The verdict line is machine-read by the guard check; always include exactly one.
 
 ## Rules for agents working in this repo

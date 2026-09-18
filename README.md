@@ -29,17 +29,19 @@ CodeRabbit only auto-reviews repos with 10+ stars; below that, comment `@coderab
 
 ### Guardrails (guard check)
 
-Every PR gets a risk tier from `.github/scripts/guard-tier.sh` (paths, terraform plan destroys, Dependabot semver, force-push):
+Every PR gets a risk tier from `.github/scripts/guard-tier.sh` (paths, terraform plan destroys, Dependabot semver, force-push, a Claude `HUMAN REVIEW REQUIRED` verdict). `guard` runs on `pull_request_target`: it always executes `main`'s copy of the workflow and scripts, and only reads the PR head as git objects, so a PR cannot change the gate that judges it.
 
 | Tier | Merge | You get |
 |---|---|---|
-| low | auto-merge once `lint`, `check`, `guard` are green and both reviewers report clean | silent Telegram digest |
+| low | auto-merge once `lint`, `check`, `guard` are green, Claude posted `VERDICT: PASS` on this head (Dependabot: skipped) and CodeRabbit has no findings on this head | silent Telegram digest (once per head) |
 | medium | blocked until you add label `human-approved` | Telegram alert with reasons + reviewer's suggested fix |
 | high | blocked until `human-approved` (+ `allow-destroy` for destroys) | same, marked HIGH |
 
-Labels only count when added by a repo admin; any push to the PR branch strips `human-approved` and `allow-destroy`, so they always describe the current head.
+Labels only count when added by a repo admin after the current head was pushed (GitHub's own timestamps: the label event vs. the head's first check suite); any push also strips `human-approved` and `allow-destroy`. With `strict: true` branch protection, "Update branch" is a push too, so it needs a fresh `human-approved`.
 
-Reviewer verdicts are machine-read: Claude must post `VERDICT: PASS` or `VERDICT: HUMAN REVIEW REQUIRED` + `Suggested fix:`; CodeRabbit must report `Actionable comments posted: 0`.
+Reviewer verdicts are machine-read and bound to the current head: Claude (`claude[bot]` only) must post `VERDICT: PASS` or `VERDICT: HUMAN REVIEW REQUIRED` + `Suggested fix:` after the head was pushed; CodeRabbit counts only for a review of this exact commit. CodeRabbit with no review does not block Low (it needs a manual `@coderabbitai review` below 10 stars); CodeRabbit with findings does. A Low PR that stops being clean has auto-merge disabled.
+
+Known limitation, agent identity: agent sessions currently use the maintainer's GitHub login (an admin), so the label check cannot tell an agent from the maintainer. Mitigations in place: the `.claude` hook and deny-list block label edits, merges and pushes to `main` from agent sessions, and branch protection runs with `enforce_admins`. A dedicated GitHub App identity is planned for when agents run unattended.
 
 Known limitation: auto-merged PRs do not trigger `push` workflows on `main` (GitHub does not fan out events from `GITHUB_TOKEN`). The PR's own checks are the verification; `main-red` covers manual dispatches. A GitHub App token can lift this later.
 

@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Migration = `moved {}` only; acceptance for each env: `terraform plan` shows **0 to destroy** and **0 to add** except adds listed in the PR body (allowed: none expected; if the s3 module wants `aws_s3_bucket_ownership_controls`, set `control_object_ownership = false` or list it). In-place updates allowed only for policy documents whose semantics are unchanged (trust policy `StringEquals`→`ForAllValues:StringEquals` on aud, SNS default statement) and tags.
+- Migration = `moved {}` only; acceptance for each env: `terraform plan` shows **0 to destroy** and **0 to add** except adds listed in the PR body (allowed: the bootstrap plan role and its inline policy; if the s3 module wants `aws_s3_bucket_ownership_controls`, set `control_object_ownership = false` or list it). In-place updates allowed only for the apply-role trust policy (narrowed to `environment:prod`, aud stays `StringEquals` — never `ForAllValues`), policy documents whose semantics are unchanged (SNS default statement), and tags.
 - Names unchanged: role `ned-github-terraform` (set `use_name_prefix = false`), user `ned-runtime`, policies `ned-runtime-bedrock`, `ned-user-boundary`, `ned-role-boundary`, log group `/ned/bedrock`, topic `ned-budget-alerts`, budget `ned-monthly`, bucket `ned-tfstate-<acct>`.
 - State keys unchanged: `bootstrap/terraform.tfstate`, `aws/terraform.tfstate` (documented in `infra/README.md`).
 - Module rules: no provider blocks in modules; `versions.tf` with `required_providers` constraints; `README.md` per module (purpose, inputs, outputs, why-not-official where applicable); `tests/*.tftest.hcl` with `mock_provider "aws" {}` (+ `mock_provider "tls" {}` where used) and `command = apply`; variables validated; outputs minimal.
@@ -54,8 +54,9 @@ infra/
 **Files:** create the module files listed above.
 
 **Interfaces:**
-- Inputs: `name` (default `ned-github-terraform`), `github_repo` (owner/name), `github_owner_id` (number), `github_repo_id` (number), `state_bucket_arn`, `aws_region`, `account_id`, `tags`.
-- Outputs: `role_arn`, `oidc_provider_arn`, `user_boundary_arn`, `role_boundary_arn`.
+- Inputs: `name` (default `ned-github-terraform`), `plan_role_name` (default `ned-github-terraform-plan`), `github_repo` (owner/name), `github_owner_id` (number), `github_repo_id` (number), `state_bucket_arn`, `aws_region`, `account_id`, `tags`.
+- Outputs: `role_arn`, `plan_role_arn`, `oidc_provider_arn`, `user_boundary_arn`, `role_boundary_arn`.
+- Two roles (least privilege for PR code): **apply** role `ned-github-terraform` trusts only `repo:<subject>:environment:prod`; **plan** role `ned-github-terraform-plan` is read-only on `ned-*` resources (Get/List/Describe), reads state objects, writes `plans/*`, and trusts `repo:<subject>:pull_request` and `repo:<subject>:ref:refs/heads/main`. PR-authored Terraform therefore never runs with write credentials.
 - Internal addresses later used by `moved`: `module.oidc_provider.aws_iam_openid_connect_provider.this[0]`, `module.role.aws_iam_role.this[0]`, `module.role.aws_iam_role_policy.inline[0]`, `aws_iam_policy.user_boundary`, `aws_iam_policy.role_boundary`.
 
 - [ ] **Step 1: `versions.tf`**
@@ -91,19 +92,30 @@ module "role" {
   name                 = var.name
   use_name_prefix      = false
   max_session_duration = 3600
-  enable_github_oidc     = true
-  oidc_wildcard_subjects = ["${split("/", var.github_repo)[0]}@${var.github_owner_id}/${split("/", var.github_repo)[1]}@${var.github_repo_id}:*"]
+  # NOT enable_github_oidc: it writes `ForAllValues:StringEquals` on aud, which passes when the key is absent.
+  # Explicit trust instead: StringEquals aud + StringLike sub. Verify the variable shape from the module source
+  # (6.8.2 variables.tf) at implementation time; the shape below is the intent.
+  trust_policy_permissions = {
+    GithubOidc = {
+      actions    = ["sts:AssumeRoleWithWebIdentity"]
+      principals = [{ type = "Federated", identifiers = [module.oidc_provider.arn] }]
+      condition = [
+        { test = "StringEquals", variable = "token.actions.githubusercontent.com:aud", values = ["sts.amazonaws.com"] },
+        { test = "StringLike", variable = "token.actions.githubusercontent.com:sub", values = ["repo:${local.subject}:environment:prod"] },
+      ]
+    }
+  }
   create_inline_policy      = true
   inline_policy_permissions = local.ci_statements
   tags = var.tags
   depends_on = [module.oidc_provider]
 }
 ```
-(The module builds `repo:<subject>` with `StringLike` and aud `sts.amazonaws.com` — confirmed in the interface reference.)
+`local.subject = "${split("/", var.github_repo)[0]}@${var.github_owner_id}/${split("/", var.github_repo)[1]}@${var.github_repo_id}"`. A second `module "plan_role"` (same source/version) uses the same trust shape with sub values `repo:${local.subject}:pull_request` and `repo:${local.subject}:ref:refs/heads/main`, and an inline read-only policy (`local.plan_statements`: `iam:Get*`/`iam:List*` on `ned-*` users/roles/policies, `logs:Describe*`, `sns:Get*`/`sns:List*`, `ssm:DescribeParameters`/`ssm:GetParameter*` metadata on `/ned/*`, `budgets:View*`, `bedrock:GetModelInvocationLoggingConfiguration`, `s3:GetObject` on `aws/*`, `s3:PutObject` on `plans/*`, `s3:ListBucket` on the state bucket).
 
-- [ ] **Step 6: `outputs.tf`** — `role_arn = module.role.arn`, `oidc_provider_arn = module.oidc_provider.arn`, `user_boundary_arn`, `role_boundary_arn`.
+- [ ] **Step 6: `outputs.tf`** — `role_arn = module.role.arn`, `plan_role_arn = module.plan_role.arn`, `oidc_provider_arn = module.oidc_provider.arn`, `user_boundary_arn`, `role_boundary_arn`.
 
-- [ ] **Step 7: `tests/role.tftest.hcl`** — `mock_provider "aws" {}` and `mock_provider "tls" {}`; `mock_data "aws_caller_identity"`-style overrides are not needed (account id is an input). Runs (`command = apply`): boundary names; `module.role.aws_iam_role_policy.inline[0].policy` decoded contains Sids `DenySelfModifyAndBoundaryRemoval`, `DenyBoundaryPolicyEdits`, `NedIamCreateUserWithBoundary` with `iam:PermissionsBoundary` condition, `PassRoleToBedrockOnly` with `iam:PassedToService`; no `"Action":"*"`; trust policy (`module.role.aws_iam_role.this[0].assume_role_policy`) contains `repo:EITANPOD@164246517/ned@1376066666:*`. Note: with mock providers, `aws_iam_policy_document` data sources inside the official module return synthetic JSON — if assertions on `inline[0].policy` cannot see real content, assert on `local.ci_statements` via an `output` in a test-only `outputs` block instead, and record it in the README. (Mock providers fabricate data-source results; the plan accepts asserting the locals.)
+- [ ] **Step 7: `tests/role.tftest.hcl`** — `mock_provider "aws" {}` and `mock_provider "tls" {}`; `mock_data "aws_caller_identity"`-style overrides are not needed (account id is an input). Runs (`command = apply`): boundary names; `module.role.aws_iam_role_policy.inline[0].policy` decoded contains Sids `DenySelfModifyAndBoundaryRemoval`, `DenyBoundaryPolicyEdits`, `NedIamCreateUserWithBoundary` with `iam:PermissionsBoundary` condition, `PassRoleToBedrockOnly` with `iam:PassedToService`; no `"Action":"*"`; apply-role trust policy (`module.role.aws_iam_role.this[0].assume_role_policy`) contains `repo:EITANPOD@164246517/ned@1376066666:environment:prod`, a `StringEquals` aud condition, and no `ForAllValues`; plan-role trust contains `:pull_request` and `:ref:refs/heads/main` and its policy has no `iam:Create*`/`Put*`/`Delete*`/`Attach*`. Note: with mock providers, `aws_iam_policy_document` data sources inside the official module return synthetic JSON — if assertions on `inline[0].policy` cannot see real content, assert on `local.ci_statements` via an `output` in a test-only `outputs` block instead, and record it in the README. (Mock providers fabricate data-source results; the plan accepts asserting the locals.)
 
 - [ ] **Step 8: `README.md`** — purpose, inputs/outputs table, "official modules used", "why boundaries are plain resources" (iam-policy wrapper adds nothing), migration addresses.
 
@@ -218,7 +230,7 @@ module "github_ci_role" {
 ```
 - [ ] **Step 2: `moved.tf`** — one `moved {}` per existing address (bucket, versioning, SSE, public block, lifecycle, OIDC provider, role, inline policy, two boundaries) to the addresses listed in Task 1 / the interface reference. Example: `moved { from = aws_iam_role.ci  to = module.github_ci_role.module.role.aws_iam_role.this[0] }`.
 - [ ] **Step 3:** `backend.tf` (same partial S3 backend, key `bootstrap/terraform.tfstate`), `versions.tf` (aws + tls), `variables.tf`, `outputs.tf` (`ci_role_arn`, `state_bucket`, boundary ARNs), README (local apply runbook, moved from the root README).
-- [ ] **Step 4 (maintainer, local):** `terraform init -reconfigure -backend-config=…` then `terraform plan` → must print `0 to destroy`; expected: `0 to add`, in-place updates limited to `aws_iam_role.this[0]` (trust policy form) and `aws_iam_openid_connect_provider.this[0]` (thumbprint list) and tags. Paste the plan summary into the PR. Apply after review.
+- [ ] **Step 4 (maintainer, local):** `terraform init -reconfigure -backend-config=…` then `terraform plan` → must print `0 to destroy`; expected: adds limited to the new plan role and its inline policy, in-place updates limited to `aws_iam_role.this[0]` (trust policy form) and `aws_iam_openid_connect_provider.this[0]` (thumbprint list) and tags. Also record the inline policy **name** the official iam-role module uses for `aws_iam_role_policy.inline[0]`: if it differs from `ned-github-terraform`, the plan shows a replace of that policy — accept only if the replacement is create-before-destroy safe (the role never loses its policy mid-apply); otherwise pin the name via the module's inline-policy name input. Paste the plan summary into the PR. Apply after review.
 - [ ] Commit `feat(infra): envs/bootstrap on official s3 + github-ci-role module, moved blocks`.
 
 ---
@@ -232,8 +244,9 @@ module "github_ci_role" {
 
 ### Task 6: CI + repo wiring; delete old roots
 
+- [ ] Plan job assumes `vars.AWS_TF_PLAN_ROLE_ARN` (new repo variable from `terraform output -raw plan_role_arn`); apply job keeps `vars.AWS_TF_ROLE_ARN`.
 - [ ] Rename `.github/workflows/infra-aws.yml` → `infra.yml`; `defaults.run.working-directory: infra/envs/prod`; add to `check` a matrix job `module-tests` over `[github-ci-role, bedrock-runtime, budget-alerts]` running `terraform init -backend=false && terraform test` in `infra/modules/${{ matrix.module }}` (env indirection, no `${{ }}` in run). Trivy/tflint scan `infra`. Update `main-red.yml`/`guard.yml` workflow name references (`infra-aws` → `infra`) and branch-protection context name if the job id changes (keep job id `check`).
-- [ ] `git rm -r infra/bootstrap infra/aws`; update `README.md` (runbook paths), `CLAUDE.md` (conventions line), `.github/dependabot.yml` (terraform directories: `/infra/envs/bootstrap`, `/infra/envs/prod`, `/infra/modules/*` — one entry per dir), `guard-tier.sh` path rules (`infra/envs/bootstrap/*` High; `infra/**` Medium) + its tests.
+- [ ] `git rm -r infra/bootstrap infra/aws`; update `README.md` (runbook paths), `CLAUDE.md` (conventions line), `.github/dependabot.yml` (terraform directories: `/infra/envs/bootstrap`, `/infra/envs/prod`, `/infra/modules/*` — one entry per dir), `guard-tier.sh` path rules (`infra/envs/bootstrap/*` and `infra/modules/github-ci-role/*` High; `infra/**` Medium) + its tests.
 - [ ] Commit `refactor(infra): modules/envs layout; ci works from envs/prod; remove flat roots`.
 
 ---

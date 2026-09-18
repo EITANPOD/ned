@@ -102,6 +102,8 @@ module "github_oidc" {
 
 ### 2b. `modules/iam-role` — CRITICAL: GitHub OIDC trust `sub` condition
 
+> Ned does **not** use `enable_github_oidc` (its `ForAllValues:StringEquals` aud condition passes when the key is absent); see the Phase 0c plan, Task 1, for the explicit `trust_policy_permissions` form. The example below documents the module only.
+
 ```hcl
 module "github_actions_role" {
   source  = "terraform-aws-modules/iam/aws//modules/iam-role"
