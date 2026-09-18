@@ -97,10 +97,12 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: tfplan
-          path: |
-            infra/aws/tfplan
-            infra/aws/plan.txt
+          path: infra/aws/plan.txt
           retention-days: 1
+      # tfplan embeds prior state (incl. sensitive values); never publish it as an artifact on a public repo.
+      - name: Stash plan in state bucket (dispatch only)
+        if: github.event_name == 'workflow_dispatch'
+        run: aws s3 cp tfplan "s3://${{ vars.TF_STATE_BUCKET }}/plans/${{ github.run_id }}.tfplan"
       - name: Comment plan on PR
         if: github.event_name == 'pull_request'
         env:
@@ -136,13 +138,11 @@ jobs:
         with:
           terraform_version: "1.14.9"
           terraform_wrapper: false
-      - uses: actions/download-artifact@v8
-        with:
-          name: tfplan
-          path: infra/aws
       - run: |
           terraform init \
             -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
             -backend-config="region=${{ vars.AWS_REGION }}"
+      - name: Fetch plan from state bucket
+        run: aws s3 cp "s3://${{ vars.TF_STATE_BUCKET }}/plans/${{ github.run_id }}.tfplan" tfplan
       - run: terraform apply -input=false tfplan
       - run: terraform output >> "$GITHUB_STEP_SUMMARY"
