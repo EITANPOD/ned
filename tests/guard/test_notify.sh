@@ -10,4 +10,11 @@ assert_contains "$log" "parse_mode=HTML" "parse mode"
 assert_contains "$log" "disable_notification=true" "silent"
 # raw '<b' inside text must be escaped, but our own <b> tags are allowed via the RAW_HTML marker rule:
 assert_contains "$log" "text=<b>hi</b> a&lt;b &amp; c" "escaping"
+
+# transport failure → exit 1, masked message
+printf '#!/usr/bin/env bash\nexit 28\n' > "$(dirname "$FAKE_CURL_LOG")/curl"
+set +e; MESSAGE=x bash ../../.github/actions/telegram-notify/notify.sh 2>/tmp/notify.err; rc=$?; set -e
+assert_eq 1 "$rc" "transport failure exit code"
+assert_contains "$(cat /tmp/notify.err)" "transport error" "transport failure message"
+
 echo "ok notify"
