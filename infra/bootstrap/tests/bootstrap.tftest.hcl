@@ -2,6 +2,8 @@ mock_provider "aws" {}
 
 variables {
   github_repo       = "EITANPOD/ned"
+  github_owner_id   = 164246517
+  github_repo_id    = 1376066666
   aws_region        = "us-east-1"
   state_bucket_name = "ned-tfstate-test"
 }
@@ -27,7 +29,7 @@ run "ci_role_trusts_only_this_repo" {
   command = apply
 
   assert {
-    condition     = strcontains(aws_iam_role.ci.assume_role_policy, "repo:EITANPOD/ned:*")
+    condition     = strcontains(aws_iam_role.ci.assume_role_policy, "repo:EITANPOD@164246517/ned@1376066666:*")
     error_message = "CI role trust must be scoped to the repo"
   }
   assert {

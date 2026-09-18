@@ -8,6 +8,16 @@ variable "github_repo" {
   }
 }
 
+variable "github_owner_id" {
+  description = "Numeric GitHub owner (user/org) id; appears in the OIDC sub claim as owner@<id>."
+  type        = number
+}
+
+variable "github_repo_id" {
+  description = "Numeric GitHub repository id; appears in the OIDC sub claim as repo@<id>."
+  type        = number
+}
+
 variable "aws_region" {
   description = "Region for all Ned AWS resources."
   type        = string

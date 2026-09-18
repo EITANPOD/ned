@@ -31,12 +31,12 @@ Dependabot PRs are skipped by Claude (no secrets on those runs).
 Bootstrap is the one Terraform module applied from a laptop, once, because CI cannot authenticate before the OIDC role exists. It creates: the state bucket, the GitHub OIDC provider, and the CI role `ned-github-terraform`.
 
 1. Repo variables: `AWS_ACCOUNT_ID`, `AWS_REGION=us-east-1`, `TF_STATE_BUCKET=ned-tfstate-<account-id>`, `BUDGET_EMAIL=<you>`.
-2. Local, with your admin profile:
+2. Local, with your admin profile. Get the ids with `gh api repos/<owner>/<repo> -q '.owner.id, .id'`.
 
    ```bash
    cd infra/bootstrap
    printf 'terraform {\n  backend "local" {}\n}\n' > zz_local_override.tf
-   export AWS_PROFILE=<admin-profile> TF_VAR_github_repo=<owner>/<repo> TF_VAR_aws_region=us-east-1 TF_VAR_state_bucket_name=ned-tfstate-<account-id>
+   export AWS_PROFILE=<admin-profile> TF_VAR_github_repo=<owner>/<repo> TF_VAR_github_owner_id=<owner-id> TF_VAR_github_repo_id=<repo-id> TF_VAR_aws_region=us-east-1 TF_VAR_state_bucket_name=ned-tfstate-<account-id>
    terraform init -reconfigure && terraform apply
    rm zz_local_override.tf
    terraform init -migrate-state -force-copy -backend-config="bucket=$TF_VAR_state_bucket_name" -backend-config="region=$TF_VAR_aws_region"

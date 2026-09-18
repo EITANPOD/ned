@@ -60,6 +60,8 @@ resource "aws_iam_openid_connect_provider" "github" {
 
 # Policies are plain jsonencode() (not aws_iam_policy_document data sources) so
 # `terraform test` with mock_provider can assert on their content.
+# GitHub now embeds numeric ids in the OIDC sub claim, so the subject is pinned as
+# repo:<owner>@<owner_id>/<name>@<repo_id>:* — a rename cannot re-acquire this role.
 locals {
   ci_trust_policy = jsonencode({
     Version = "2012-10-17"
@@ -69,7 +71,7 @@ locals {
       Principal = { Federated = aws_iam_openid_connect_provider.github.arn }
       Condition = {
         StringEquals = { "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com" }
-        StringLike   = { "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:*" }
+        StringLike   = { "token.actions.githubusercontent.com:sub" = "repo:${split("/", var.github_repo)[0]}@${var.github_owner_id}/${split("/", var.github_repo)[1]}@${var.github_repo_id}:*" }
       }
     }]
   })
