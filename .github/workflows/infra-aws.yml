@@ -95,6 +95,19 @@ jobs:
           set -e
           echo "exitcode=$code" >> "$GITHUB_OUTPUT"
           [ "$code" -ne 1 ]
+      - name: Destroy alert
+        if: github.event_name == 'pull_request'
+        id: destroys
+        run: |
+          d=$(sed -n 's/^Plan: .* \([0-9]\+\) to destroy\.$/\1/p' plan.txt | tail -1)
+          echo "count=${d:-0}" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/telegram-notify
+        if: github.event_name == 'pull_request' && steps.destroys.outputs.count != '0'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        with:
+          message: "🛑 <b>terraform plan destroys ${{ steps.destroys.outputs.count }} resource(s)</b> in PR #${{ github.event.pull_request.number }} — review the plan comment before adding <code>allow-destroy</code>."
       - uses: actions/upload-artifact@v7
         with:
           name: plan-text
@@ -104,6 +117,13 @@ jobs:
       - name: Stash plan in state bucket (dispatch only)
         if: github.event_name == 'workflow_dispatch'
         run: aws s3 cp tfplan "s3://${{ vars.TF_STATE_BUCKET }}/plans/${{ github.run_id }}.tfplan"
+      - uses: ./.github/actions/telegram-notify
+        if: github.event_name == 'workflow_dispatch' && inputs.action == 'apply'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        with:
+          message: "⏳ infra/aws apply is waiting for your <b>prod</b> approval — <a href=\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\">approve</a>"
       - name: Comment plan on PR
         if: github.event_name == 'pull_request'
         env:
@@ -149,3 +169,17 @@ jobs:
         run: aws s3 cp "s3://${{ vars.TF_STATE_BUCKET }}/plans/${{ github.run_id }}.tfplan" tfplan
       - run: terraform apply -input=false tfplan
       - run: terraform output >> "$GITHUB_STEP_SUMMARY"
+      - uses: ./.github/actions/telegram-notify
+        if: success()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        with:
+          message: "✅ infra/aws applied (run ${{ github.run_id }})"
+      - uses: ./.github/actions/telegram-notify
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        with:
+          message: "❌ <b>infra/aws apply FAILED</b> — <a href=\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\">logs</a>. Suggested first step: re-run once (IAM propagation); if it fails again, open the log and do not re-dispatch."

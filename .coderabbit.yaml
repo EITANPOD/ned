@@ -15,3 +15,5 @@ reviews:
       instructions: "Terraform: check least-privilege IAM (resource-scoped, no Action:*), ned- naming, no secrets in code, tests assert real behavior."
     - path: ".github/workflows/**"
       instructions: "GitHub Actions: actions pinned to major tags, minimal per-job permissions, no apply on push, no long-lived cloud keys."
+    - path: "**"
+      instructions: "Escalate (do not just suggest) when: IAM trust/boundary/CI-role changes, wildcard actions or resources, secrets in diff, workflow permission widening or unpinned actions, deleted tests, terraform destroys, or edits under .github/workflows/guard.yml, .github/actions, .github/scripts, .claude, CLAUDE.md, .coderabbit.yaml. State the concrete fix."

@@ -1,0 +1,25 @@
+name: main-red
+
+on:
+  workflow_run:
+    workflows: [pre-commit, infra-aws, guard]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  alert:
+    if: github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/telegram-notify
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        with:
+          message: "❌ <b>${{ github.event.workflow_run.name }} failed on main</b> — <a href=\"${{ github.event.workflow_run.html_url }}\">run</a>"

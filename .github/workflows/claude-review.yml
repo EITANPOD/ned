@@ -31,12 +31,14 @@ jobs:
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
 
-            Review this pull request against the rules in CLAUDE.md. Report only
-            concrete problems: security issues, correctness bugs, drift from the
-            design spec, over-engineering, weak tests. Skip style nits.
+            Review this pull request against the rules in CLAUDE.md, including its
+            STOP conditions. Report only concrete problems: security issues,
+            correctness bugs, drift from the design spec, over-engineering, weak tests.
+            Skip style nits.
 
-            Post ONE overall comment with `gh pr comment` (verdict + at most five
-            bullets). Use the inline comment tool (confirmed: true) only for
-            defects you can point to by file and line. If nothing is wrong, say
-            so in one line.
+            Post ONE overall comment with `gh pr comment` containing: a verdict line
+            (exactly `VERDICT: PASS` or `VERDICT: HUMAN REVIEW REQUIRED`), at most five
+            bullets, and when not PASS a line starting with `Suggested fix:` giving the
+            concrete change. Use the inline comment tool (confirmed: true) only for
+            defects you can point to by file and line.
           claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)" --model claude-haiku-4-5-20251001'
