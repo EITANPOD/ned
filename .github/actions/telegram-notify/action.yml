@@ -1,5 +1,7 @@
 name: telegram-notify
-description: "Send a Telegram message via the Ned bot (HTML; never fails the caller)"
+# Composite steps have no continue-on-error, so notify.sh's failure is swallowed in the run line:
+# an unreachable Telegram must never fail the caller's workflow.
+description: "Send a Telegram message via the Ned bot (HTML; logs a warning instead of failing the caller)"
 inputs:
   message:
     description: "HTML message (tags allowed: b, i, code, a)"
@@ -12,8 +14,7 @@ runs:
   using: composite
   steps:
     - shell: bash
-      continue-on-error: true
       env:
         MESSAGE: ${{ inputs.message }}
         SILENT: ${{ inputs.silent }}
-      run: bash "${{ github.action_path }}/notify.sh"
+      run: bash "${{ github.action_path }}/notify.sh" || echo "::warning::telegram notify failed"
