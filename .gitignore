@@ -11,3 +11,4 @@ node_modules/
 *.tfstate.*
 .tfplan
 .DS_Store
+.superpowers/
