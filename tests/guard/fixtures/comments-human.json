@@ -1,0 +1,2 @@
+[{"user":{"login":"github-actions[bot]"},"body":"### terraform plan"},
+ {"user":{"login":"claude[bot]"},"body":"Trust policy widened.\n\nVERDICT: HUMAN REVIEW REQUIRED\nSuggested fix: pin Principal to arn:aws:iam::123:role/ned-*\nMore text.\n"}]
