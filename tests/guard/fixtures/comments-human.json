@@ -1,2 +1,18 @@
-[{"user":{"login":"github-actions[bot]"},"body":"### terraform plan"},
- {"user":{"login":"claude[bot]"},"body":"Trust policy widened.\n\nVERDICT: HUMAN REVIEW REQUIRED\nSuggested fix: pin Principal to arn:aws:iam::123:role/ned-*\nMore text.\n"}]
+[
+ {
+  "user": {
+   "login": "github-actions[bot]",
+   "type": "Bot"
+  },
+  "body": "### terraform plan",
+  "created_at": "2026-09-18T11:00:00Z"
+ },
+ {
+  "user": {
+   "login": "claude[bot]",
+   "type": "Bot"
+  },
+  "body": "Trust policy widened.\r\n\r\nVERDICT: HUMAN REVIEW REQUIRED\r\nSuggested fix: pin Principal to arn:aws:iam::123:role/ned-*\r\nMore text.\n",
+  "created_at": "2026-09-18T11:00:00Z"
+ }
+]

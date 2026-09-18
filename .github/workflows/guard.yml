@@ -1,7 +1,9 @@
 name: guard
 
+# pull_request_target: the gate runs main's copy of this file and .github/scripts with a write token, so it must
+# never check out, source, or execute anything from the PR head. The head is fetched as git objects for diffing only.
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
   workflow_run:
     workflows: [claude-review, infra-aws]
@@ -15,17 +17,18 @@ permissions:
 
 concurrency:
   group: guard-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
 
 jobs:
   guard:
-    if: github.event_name == 'pull_request' || github.event.workflow_run.pull_requests[0] != null
+    if: github.event_name == 'pull_request_target' || github.event.workflow_run.pull_requests[0] != null
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
       PR: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
     steps:
+      # Default ref = the base branch (main): trusted code only.
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
@@ -36,11 +39,17 @@ jobs:
         id: pr
         run: |
           gh pr view "$PR" --json headRefOid,baseRefOid,headRefName,title,author,isDraft,isCrossRepository,url > pr.json
+          head=$(jq -r .headRefOid pr.json)
+          # HEAD_TIME: when GitHub first saw this head (earliest check suite), server-set. Approvals must be newer.
+          # No suite yet → now, so nothing older can count (fail closed).
+          head_time=$(gh api "repos/$REPO/commits/$head/check-suites" --paginate | jq -rs '[.[].check_suites[].created_at] | min // empty')
           {
-            printf 'head=%s\n' "$(jq -r .headRefOid pr.json)"
+            printf 'head=%s\n' "$head"
+            printf 'head_time=%s\n' "${head_time:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
             printf 'base=%s\n' "$(jq -r .baseRefOid pr.json)"
             printf 'branch=%s\n' "$(jq -r .headRefName pr.json)"
-            printf 'actor=%s\n' "$(jq -r .author.login pr.json)"
+            # gh reports bots as app/<name>; normalize to the REST form (dependabot[bot]) the scripts compare against.
+            printf 'actor=%s\n' "$(jq -r '.author | if .is_bot then (.login | sub("^app/"; "")) + "[bot]" else .login end' pr.json)"
             printf 'draft=%s\n' "$(jq -r .isDraft pr.json)"
             printf 'fork=%s\n' "$(jq -r .isCrossRepository pr.json)"
           } >> "$GITHUB_OUTPUT"
@@ -49,16 +58,20 @@ jobs:
             d=$(openssl rand -hex 8)
             { echo "$f<<$d"; jq -r ".$f" pr.json; echo "$d"; } >> "$GITHUB_OUTPUT"
           done
+          # One array each (pages merged); read by Verdicts and by guard-marked.sh.
+          gh api "repos/$REPO/issues/$PR/comments" --paginate | jq -s add > comments.json
+          gh api "repos/$REPO/pulls/$PR/reviews" --paginate | jq -s add > reviews.json
 
       - name: Fork PR note
         if: steps.pr.outputs.fork == 'true'
         run: |
           echo "fork PR: guard reports tier only, no labels/merge" >> "$GITHUB_STEP_SUMMARY"
 
-      # Freshness rule: any push to the PR branch drops the human labels. No commit dates involved.
+      # UX only: any push drops the human labels. The binding rule is in guard-labels.sh (label newer than
+      # HEAD_TIME), which still holds if this step is cancelled by a newer run.
       - name: Strip human labels on new commits
         if: >-
-          github.event_name == 'pull_request' && github.event.action == 'synchronize' &&
+          github.event_name == 'pull_request_target' && github.event.action == 'synchronize' &&
           steps.pr.outputs.fork == 'false'
         run: |
           for l in human-approved allow-destroy; do
@@ -76,12 +89,11 @@ jobs:
           ACTION: ${{ github.event.action }}
           FORK: ${{ steps.pr.outputs.fork }}
         run: |
-          git fetch -q origin "$HEAD"
+          # Objects only: nothing from the PR head is checked out or executed.
+          git fetch -q origin "refs/pull/$PR/head"
           git diff --name-status --no-renames "$BASE...$HEAD" > changed.txt
           marker="<!-- guard-forcepush:$HEAD -->"
-          marked() { # a force push was already recorded for this head
-            gh api "repos/$REPO/issues/$PR/comments" --paginate --slurp -q 'add | .[].body' | grep -qF -- "$marker"
-          }
+          marked() { bash .github/scripts/guard-marked.sh "$marker"; } # force push already recorded for this head
           # force push: the previous head is gone or is not an ancestor of the current head
           if [ "$ACTION" = synchronize ] && [ -n "$BEFORE" ]; then
             if git fetch -q origin "$BEFORE" 2>/dev/null && git merge-base --is-ancestor "$BEFORE" "$HEAD"; then
@@ -107,14 +119,15 @@ jobs:
         run: |
           rid=$(gh run list --workflow=infra-aws.yml -b "$BRANCH" -L 100 --json databaseId,headSha,status \
             | jq -r --arg h "$HEAD" '[.[] | select(.headSha == $h and .status == "completed")] | first | .databaseId // empty')
+          # The artifact is PR-produced data: extract it outside the workspace (next to nothing we execute), parse only.
           if [ -n "$rid" ]; then
-            gh run download "$rid" -n plan-text -D plan || true
+            gh run download "$rid" -n plan-text -D "$RUNNER_TEMP/plan" || true
           else
             # No completed infra-aws run for this head yet: the workflow_run re-trigger will alert with the real tier.
             echo "SKIP_ALERT=1" >> "$GITHUB_ENV"
           fi
-          if [ -f plan/plan.txt ]; then
-            echo "PLAN_FILE=plan/plan.txt" >> "$GITHUB_ENV"
+          if [ -f "$RUNNER_TEMP/plan/plan.txt" ]; then
+            echo "PLAN_FILE=$RUNNER_TEMP/plan/plan.txt" >> "$GITHUB_ENV"
           else
             echo "PLAN_FILE=" >> "$GITHUB_ENV"
           fi
@@ -128,16 +141,17 @@ jobs:
 
       - name: Verdicts
         id: verdicts
-        run: |
-          gh api "repos/$REPO/issues/$PR/comments" --paginate > comments.json
-          gh api "repos/$REPO/pulls/$PR/reviews" --paginate > reviews.json
-          COMMENTS_JSON=comments.json REVIEWS_JSON=reviews.json bash .github/scripts/guard-verdicts.sh | tee -a "$GITHUB_OUTPUT"
+        env:
+          HEAD_SHA: ${{ steps.pr.outputs.head }}
+          HEAD_TIME: ${{ steps.pr.outputs.head_time }}
+        run: COMMENTS_JSON=comments.json REVIEWS_JSON=reviews.json bash .github/scripts/guard-verdicts.sh | tee -a "$GITHUB_OUTPUT"
 
       - name: Labels
         id: labels
         if: steps.pr.outputs.fork == 'false'
         env:
           TIER: ${{ steps.tier.outputs.tier }}
+          HEAD_TIME: ${{ steps.pr.outputs.head_time }}
         run: bash .github/scripts/guard-labels.sh | tee -a "$GITHUB_OUTPUT"
 
       - name: Summary
@@ -163,8 +177,7 @@ jobs:
         env:
           HEAD: ${{ steps.pr.outputs.head }}
         run: |
-          marker="<!-- guard-alerted:$HEAD -->"
-          if gh pr view "$PR" --json comments -q '.comments[].body' | grep -qF -- "$marker"; then
+          if bash .github/scripts/guard-marked.sh "<!-- guard-alerted:$HEAD -->"; then
             echo "already alerted for this head"
           else
             echo "ALERT=1" >> "$GITHUB_ENV"

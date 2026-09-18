@@ -10,28 +10,21 @@ with_fake_gh() {
   cat > "$bin/gh" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FAKE_GH_LOG"
-jq_query() { # the program gh was given with -q/--jq
-  local prev=""
-  for a in "$@"; do
-    if [ "$prev" = -q ] || [ "$prev" = --jq ]; then printf '%s' "$a"; return; fi
-    prev="$a"
-  done
-}
+# Real gh rejects --slurp together with -q/--jq; fail loudly if a script relies on it.
+case " $* " in *" --slurp "*) case " $* " in *" -q "*|*" --jq "*) echo "fake gh: --slurp with --jq" >&2; exit 98;; esac;; esac
 case "$*" in
   "label list"*)     printf '%s\n' tier:low tier:medium tier:high needs-human human-approved allow-destroy ;;
   *"--json labels"*) printf '%s\n' ${FAKE_PR_LABELS:-} ;;  # unquoted: one label per line
   *"/events"*)
-    # The real call must page and slurp, or the last 'labeled' event can be on a page we never read.
-    case "$*" in *--paginate*--slurp*|*--slurp*--paginate*) ;;
-      *) echo "fake gh: /events called without --paginate --slurp: $*" >&2; exit 99 ;;
-    esac
-    # --slurp shape: one array per page. The newest matching event is on the last page.
-    jq -n --arg a "${FAKE_EVENT_ACTOR:-}" '
-      if $a == "" then [[], []]
-      else [[{event:"labeled",label:{name:"human-approved"},actor:{login:"stale-admin"},created_at:"2026-09-17T09:00:00Z"}],
-            [{event:"commented",actor:{login:"bob"},created_at:"2026-09-18T11:00:00Z"},
-             {event:"labeled",label:{name:"human-approved"},actor:{login:$a},created_at:"2026-09-18T12:00:00Z"}]]
-      end' | jq -r "$(jq_query "$@")" ;;
+    # The real call must page, or the last 'labeled' event can be on a page we never read.
+    case "$*" in *--paginate*) ;; *) echo "fake gh: /events called without --paginate: $*" >&2; exit 99 ;; esac
+    # --paginate shape: one array per page, printed back to back. The newest matching event is on the last page.
+    if [ -z "${FAKE_EVENT_ACTOR:-}" ]; then echo '[]'; echo '[]'
+    else
+      echo '[{"event":"labeled","label":{"name":"human-approved"},"actor":{"login":"stale-admin"},"created_at":"2026-09-17T09:00:00Z"}]'
+      jq -cn --arg a "$FAKE_EVENT_ACTOR" '[{event:"commented",actor:{login:"bob"},created_at:"2026-09-18T11:00:00Z"},
+        {event:"labeled",label:{name:"human-approved"},actor:{login:$a},created_at:"2026-09-18T12:00:00Z"}]'
+    fi ;;
   *"/permission"*)   printf '%s\n' "${FAKE_PERM:-write}" ;;
 esac
 exit 0
@@ -41,9 +34,9 @@ EOF
 }
 with_fake_gh
 
-run_labels() { # run_labels <tier> ; env FAKE_PR_LABELS FAKE_EVENT_ACTOR FAKE_PERM
+run_labels() { # run_labels <tier> ; env FAKE_PR_LABELS FAKE_EVENT_ACTOR FAKE_PERM HEAD_TIME
   : > "$FAKE_GH_LOG"
-  REPO=o/r PR=1 TIER="$1" bash "$script"
+  REPO=o/r PR=1 TIER="$1" HEAD_TIME="${HEAD_TIME:-2026-09-18T10:00:00Z}" bash "$script"
 }
 
 # 1. human-approved added by an admin → true, no strip
@@ -86,5 +79,14 @@ out=$(FAKE_PR_LABELS="" run_labels high)
 assert_contains "$(cat "$FAKE_GH_LOG")" "--add-label needs-human" "needs-human added above low"
 assert_eq "approved=false
 destroy_ok=false" "$out" "stdout carries only the two outputs"
+
+# 7. label added before the current head arrived (HEAD_TIME 13:00 > label 12:00) → false + strip
+out=$(FAKE_PR_LABELS="tier:low human-approved" FAKE_EVENT_ACTOR=alice FAKE_PERM=admin HEAD_TIME=2026-09-18T13:00:00Z run_labels low)
+assert_contains "$out" "approved=false" "label older than the head rejected"
+assert_contains "$(cat "$FAKE_GH_LOG")" "--remove-label human-approved" "stale label stripped"
+
+# 8. the shim itself rejects --slurp with --jq, like real gh
+set +e; gh api x --paginate --slurp -q . >/dev/null 2>&1; rc=$?; set -e
+assert_eq 98 "$rc" "shim rejects --slurp with -q"
 
 echo "ok labels"

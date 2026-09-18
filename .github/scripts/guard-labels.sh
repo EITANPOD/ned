@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Manage guard labels on a PR. Env: REPO PR TIER. Prints approved= and destroy_ok=.
-# Label freshness (new commits invalidate human labels) is enforced by guard.yml, not here.
+# Manage guard labels on a PR. Env: REPO PR TIER HEAD_TIME. Prints approved= and destroy_ok=.
+# Freshness: a human label counts only if its 'labeled' event is newer than HEAD_TIME (server-set time the
+# current head arrived). guard.yml also strips the labels on every push, as UX.
 set -euo pipefail
-: "${REPO:?}" "${PR:?}" "${TIER:?}"
+: "${REPO:?}" "${PR:?}" "${TIER:?}" "${HEAD_TIME:?}"
 
 existing=$(gh label list -R "$REPO" --limit 200 --json name -q '.[].name')
 ensure() { # ensure <name> <color> <description>
@@ -28,12 +29,11 @@ else
   grep -qx -- needs-human <<<"$current" || gh pr edit "$PR" -R "$REPO" --add-label needs-human >/dev/null
 fi
 
-valid_label() { # valid_label <name> → 0 if the last 'labeled' event for it was added by a non-bot admin
-  local ev actor
-  ev=$(gh api "repos/$REPO/issues/$PR/events" --paginate --slurp \
-    -q "add | [.[] | select(.event==\"labeled\" and .label.name==\"$1\")] | last | select(.) | \"\(.actor.login) \(.created_at)\"")
-  [ -n "$ev" ] || return 1
-  actor=${ev%% *}
+valid_label() { # valid_label <name> → 0 if its last 'labeled' event is after HEAD_TIME and by a non-bot admin
+  local actor
+  # gh rejects --slurp with -q, so pages go through jq -s (one array per page).
+  actor=$(gh api "repos/$REPO/issues/$PR/events" --paginate | jq -rs --arg n "$1" --arg t "$HEAD_TIME" \
+    'add | [.[] | select(.event == "labeled" and .label.name == $n)] | last | select(. and .created_at > $t) | .actor.login // ""')
   [ -n "$actor" ] || return 1
   [[ "$actor" != *"[bot]" ]] || return 1
   [ "$(gh api "repos/$REPO/collaborators/$actor/permission" -q .permission)" = admin ]
@@ -43,7 +43,7 @@ check() { # check <label> → prints true/false; strips an invalid label. Only t
     if valid_label "$1"; then echo true; return; fi
     gh pr edit "$PR" -R "$REPO" --remove-label "$1" >/dev/null
     gh pr comment "$PR" -R "$REPO" \
-      --body "guard: removed label \`$1\` — it must be added by a repo admin (not a bot)." >/dev/null
+      --body "guard: removed label \`$1\` — it must be added by a repo admin (not a bot) after the current head was pushed." >/dev/null
   fi
   echo false
 }
