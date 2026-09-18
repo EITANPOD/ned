@@ -16,7 +16,7 @@ resource "aws_s3_bucket_versioning" "state" {
   }
 }
 
-# trivy:ignore:AVD-AWS-0132
+# trivy:ignore:AWS-0132 SSE-S3 is sufficient here: private, versioned, single-account state bucket; a CMK adds ~$1/month for no access-control gain (upgrade path: sse_algorithm = "aws:kms" + kms_master_key_id).
 resource "aws_s3_bucket_server_side_encryption_configuration" "state" {
   bucket = aws_s3_bucket.state.id
 
@@ -34,6 +34,23 @@ resource "aws_s3_bucket_public_access_block" "state" {
   block_public_policy     = true
   ignore_public_acls      = true
   restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "state" {
+  bucket = aws_s3_bucket.state.id
+
+  rule {
+    id     = "expire-plans"
+    status = "Enabled"
+
+    filter {
+      prefix = "plans/"
+    }
+
+    expiration {
+      days = 1
+    }
+  }
 }
 
 # --- GitHub OIDC -> AWS --------------------------------------------------------
