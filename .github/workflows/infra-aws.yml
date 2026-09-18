@@ -33,10 +33,19 @@ jobs:
     defaults:
       run:
         working-directory: infra/aws
+    outputs:
+      infra_changed: ${{ steps.changed.outputs.infra_changed }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          fetch-depth: 2 # the PR merge commit and its parents
+      # Does this PR touch infra/? HEAD^1 is the base tip, so HEAD^1..HEAD is exactly what the PR brings.
+      - id: changed
+        if: github.event_name == 'pull_request'
+        run: |
+          if git diff --name-only HEAD^1 HEAD | grep -q '^infra/'; then v=true; else v=false; fi
+          echo "infra_changed=$v" >> "$GITHUB_OUTPUT"
       - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: "1.14.9"
@@ -57,14 +66,17 @@ jobs:
           exit-code: "1"
           severity: HIGH,CRITICAL
 
+  # On pull_request this job runs PR-authored Terraform (providers, external data sources), so the only credential in it
+  # is the OIDC role; no Telegram secrets and no write token. The PR comment is posted by the separate `comment` job.
   plan:
     needs: check
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (needs.check.outputs.infra_changed == 'true' && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
-      pull-requests: write
     defaults:
       run:
         working-directory: infra/aws
@@ -89,26 +101,17 @@ jobs:
             -backend-config="bucket=$TF_STATE_BUCKET" \
             -backend-config="region=$AWS_REGION"
       - id: plan
+        env:
+          # PR plans never take the state lock, so parallel PRs cannot block each other or an apply.
+          LOCK: ${{ github.event_name != 'pull_request' }}
         run: |
           set +e
-          terraform plan -out=tfplan -detailed-exitcode -no-color | tee plan.txt
+          terraform plan -lock="$LOCK" -out=tfplan -detailed-exitcode -no-color | tee plan.txt
           code=${PIPESTATUS[0]}
           set -e
           echo "exitcode=$code" >> "$GITHUB_OUTPUT"
           [ "$code" -ne 1 ]
-      - name: Destroy alert
-        if: github.event_name == 'pull_request'
-        id: destroys
-        run: |
-          d=$(sed -n 's/^Plan: .* \([0-9]\+\) to destroy\.$/\1/p' plan.txt | tail -1)
-          echo "count=${d:-0}" >> "$GITHUB_OUTPUT"
-      - uses: ./.github/actions/telegram-notify
-        if: github.event_name == 'pull_request' && steps.destroys.outputs.count != '0'
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        with:
-          message: "🛑 <b>terraform plan destroys ${{ steps.destroys.outputs.count }} resource(s)</b> in PR #${{ github.event.pull_request.number }} — review the plan comment before adding <code>allow-destroy</code>."
+      # Destroys are alerted by guard (tier high, reason names the count), not here.
       - uses: actions/upload-artifact@v7
         with:
           name: plan-text
@@ -129,21 +132,32 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         with:
           message: "⏳ infra/aws apply is waiting for your <b>prod</b> approval — <a href=\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\">approve</a>"
+
+  # Fresh runner, no PR code executed: the write token never shares a VM with PR-authored Terraform.
+  comment:
+    needs: plan
+    if: github.event_name == 'pull_request' && needs.plan.outputs.exitcode == '2'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: plan-text
       - name: Comment plan on PR
-        if: github.event_name == 'pull_request' && steps.plan.outputs.exitcode == '2'
         env:
           GH_TOKEN: ${{ github.token }}
-          EXITCODE: ${{ steps.plan.outputs.exitcode }}
+          REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           {
-            echo "### terraform plan (infra/aws) — exit code $EXITCODE"
+            echo "### terraform plan (infra/aws) — exit code 2 (changes)"
             echo
             echo '```'
             tail -c 60000 plan.txt
             echo '```'
           } > comment.md
-          gh pr comment "$PR_NUMBER" --body-file comment.md --edit-last --create-if-none
+          gh pr comment "$PR_NUMBER" -R "$REPO" --body-file comment.md --edit-last --create-if-none
 
   apply:
     if: github.event_name == 'workflow_dispatch' && inputs.action == 'apply' && needs.plan.outputs.exitcode == '2'
