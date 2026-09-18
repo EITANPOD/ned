@@ -19,6 +19,13 @@ All Terraform runs in GitHub Actions. Nothing is applied from a laptop.
 
 Local checks only: `pre-commit run --all-files`, `terraform test` (mock provider, no creds).
 
+### PR review bots
+
+Every non-draft PR gets two automated reviews:
+- **Claude Code Action** (`claude-review.yml`) — reads `CLAUDE.md`, posts one sticky verdict comment + inline defects. Auth: `CLAUDE_CODE_OAUTH_TOKEN` secret from `claude setup-token` (Pro/Max subscription).
+- **CodeRabbit** — free on public repos, config in `.coderabbit.yaml`.
+Dependabot PRs are skipped by Claude (no secrets on those runs).
+
 ### First-time bootstrap runbook
 
 Filled in by Task 7.

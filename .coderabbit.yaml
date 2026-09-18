@@ -1,0 +1,17 @@
+language: en-US
+
+reviews:
+  profile: chill
+  auto_review:
+    enabled: true
+    drafts: false
+  high_level_summary: true
+  poem: false
+  path_filters:
+    - "!docs/**"
+    - "!.superpowers/**"
+  path_instructions:
+    - path: "infra/**"
+      instructions: "Terraform: check least-privilege IAM (resource-scoped, no Action:*), ned- naming, no secrets in code, tests assert real behavior."
+    - path: ".github/workflows/**"
+      instructions: "GitHub Actions: actions pinned to major tags, minimal per-job permissions, no apply on push, no long-lived cloud keys."
