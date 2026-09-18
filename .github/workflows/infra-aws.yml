@@ -118,7 +118,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         run: aws s3 cp tfplan "s3://${{ vars.TF_STATE_BUCKET }}/plans/${{ github.run_id }}.tfplan"
       - uses: ./.github/actions/telegram-notify
-        if: github.event_name == 'workflow_dispatch' && inputs.action == 'apply'
+        if: github.event_name == 'workflow_dispatch' && inputs.action == 'apply' && steps.plan.outputs.exitcode == '2'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
