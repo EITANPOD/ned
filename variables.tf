@@ -22,21 +22,18 @@ variable "allowed_inference_profile_ids" {
   default     = ["us.amazon.nova-2-lite-v1:0"]
 }
 
-// Consumed by budgets.tf, added in task 5.
-variable "budget_email" { # tflint-ignore: terraform_unused_declarations
+variable "budget_email" {
   description = "Email that receives budget alerts."
   type        = string
 }
 
-// Consumed by budgets.tf, added in task 5.
-variable "budget_limit_usd" { # tflint-ignore: terraform_unused_declarations
+variable "budget_limit_usd" {
   description = "Monthly cost budget in USD. Alerts fire at 50% actual, 100% actual, 100% forecasted."
   type        = number
   default     = 10
 }
 
-// Consumed by logging.tf, added in task 5.
-variable "log_retention_days" { # tflint-ignore: terraform_unused_declarations
+variable "log_retention_days" {
   description = "Retention for Bedrock invocation logs."
   type        = number
   default     = 14
