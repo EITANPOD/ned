@@ -38,7 +38,7 @@ jobs:
       - name: PR facts
         id: pr
         run: |
-          gh pr view "$PR" --json headRefOid,baseRefOid,headRefName,title,author,isDraft,isCrossRepository,url > pr.json
+          gh pr view "$PR" --json headRefOid,baseRefOid,headRefName,title,author,isDraft,isCrossRepository > pr.json
           head=$(jq -r .headRefOid pr.json)
           # HEAD_TIME: when GitHub first saw this head (earliest check suite), server-set. Approvals must be newer.
           # No suite yet → now, so nothing older can count (fail closed).
@@ -53,11 +53,9 @@ jobs:
             printf 'draft=%s\n' "$(jq -r .isDraft pr.json)"
             printf 'fork=%s\n' "$(jq -r .isCrossRepository pr.json)"
           } >> "$GITHUB_OUTPUT"
-          # title and url are free text: heredoc form with a random delimiter.
-          for f in title url; do
-            d=$(openssl rand -hex 8)
-            { echo "$f<<$d"; jq -r ".$f" pr.json; echo "$d"; } >> "$GITHUB_OUTPUT"
-          done
+          # title is free text: heredoc form with a random delimiter.
+          d=$(openssl rand -hex 8)
+          { echo "title<<$d"; jq -r .title pr.json; echo "$d"; } >> "$GITHUB_OUTPUT"
           # One array each (pages merged); read by Verdicts and by guard-marked.sh.
           gh api "repos/$REPO/issues/$PR/comments" --paginate | jq -s add > comments.json
           gh api "repos/$REPO/pulls/$PR/reviews" --paginate | jq -s add > reviews.json
@@ -185,21 +183,27 @@ jobs:
             echo "ALERT=1" >> "$GITHUB_ENV"
           fi
 
-      - uses: ./.github/actions/telegram-notify
+      # message = trusted template; PR-controlled text (title, paths in reasons, reviewer fix) only via arg1..3.
+      - id: alert
+        uses: ./.github/actions/telegram-notify
         if: env.ALERT == '1'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         with:
           message: |
-            ${{ steps.tier.outputs.tier == 'high' && '🛑 <b>HIGH</b>' || '🟠 <b>MEDIUM</b>' }} | PR #${{ env.PR }} ${{ steps.pr.outputs.title }}
-            Why: ${{ steps.tier.outputs.reasons }}
+            ${{ steps.tier.outputs.tier == 'high' && '🛑 <b>HIGH</b>' || '🟠 <b>MEDIUM</b>' }} | PR #${{ env.PR }} {1}
+            Why: {2}
             Reviewers: claude=${{ steps.verdicts.outputs.claude }}, coderabbit=${{ steps.verdicts.outputs.coderabbit }}
-            Suggested fix: ${{ steps.verdicts.outputs.suggested_fix || 'n/a' }}
-            <a href="${{ steps.pr.outputs.url }}">PR</a> · approve by adding label <code>human-approved</code>${{ steps.tier.outputs.destroys != '0' && ' + <code>allow-destroy</code>' || '' }}
+            Suggested fix: {3}
+            <a href="${{ github.server_url }}/${{ github.repository }}/pull/${{ env.PR }}">PR</a> · approve by adding label <code>human-approved</code>${{ steps.tier.outputs.destroys != '0' && ' + <code>allow-destroy</code>' || '' }}
+          arg1: ${{ steps.pr.outputs.title }}
+          arg2: ${{ steps.tier.outputs.reasons }}
+          arg3: ${{ steps.verdicts.outputs.suggested_fix || 'n/a' }}
 
+      # Marked only when Telegram accepted it, so a failed send is retried by the next run for this head.
       - name: Mark alerted
-        if: env.ALERT == '1'
+        if: steps.alert.outputs.sent == 'true'
         env:
           HEAD: ${{ steps.pr.outputs.head }}
           TIER: ${{ steps.tier.outputs.tier }}
@@ -259,17 +263,19 @@ jobs:
         run: |
           bash .github/scripts/guard-marked.sh "<!-- guard-digest:$HEAD -->" || echo "DIGEST=1" >> "$GITHUB_ENV"
 
-      - uses: ./.github/actions/telegram-notify
+      - id: digest
+        uses: ./.github/actions/telegram-notify
         if: env.DIGEST == '1'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         with:
           silent: "true"
-          message: "🟢 low | PR #${{ env.PR }} ${{ steps.pr.outputs.title }} — auto-merge armed (claude=${{ steps.verdicts.outputs.claude }}, coderabbit=${{ steps.verdicts.outputs.coderabbit }})"
+          message: "🟢 low | PR #${{ env.PR }} {1} — auto-merge armed (claude=${{ steps.verdicts.outputs.claude }}, coderabbit=${{ steps.verdicts.outputs.coderabbit }})"
+          arg1: ${{ steps.pr.outputs.title }}
 
       - name: Mark digested
-        if: env.DIGEST == '1'
+        if: steps.digest.outputs.sent == 'true'
         env:
           HEAD: ${{ steps.pr.outputs.head }}
         run: |

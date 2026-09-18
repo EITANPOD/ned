@@ -26,4 +26,5 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         with:
-          message: "❌ <b>${{ github.event.workflow_run.name }} failed on main</b> — <a href=\"${{ github.event.workflow_run.html_url }}\">run</a>"
+          message: "❌ <b>{1} failed on main</b> — <a href=\"${{ github.event.workflow_run.html_url }}\">run</a>"
+          arg1: ${{ github.event.workflow_run.name }}
