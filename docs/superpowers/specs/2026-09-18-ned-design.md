@@ -2,7 +2,7 @@
 
 ## Context
 
-Eitan wants an always-on agent that knows his life (work Outlook mail+calendar, personal Gmail/GCal, Slack; more sources later), decides on its own when to interrupt him, and reaches him via Telegram (later: phone call, voice back). Dashboard with alert system. Real daily use + portfolio piece + shareable self-host for others. New project from scratch. Cheap + safe: Bedrock Nova 2 Lite, Oracle free ARM VM.
+Eitan wants an always-on agent that knows his life (work Outlook mail+calendar, personal Gmail/GCal, Slack; more sources later), decides on its own when to interrupt him, and reaches him via Telegram (later: phone call, voice back). Dashboard with alert system. Real daily use + portfolio piece + shareable self-host for others. New project from scratch. Cheap + safe: Bedrock (cheapest Nova by default, any model selectable), Oracle free ARM VM.
 
 Decisions made in brainstorming:
 - Name: **Ned**. Folder `/Users/eitanpod/eitan/.mywork/ned`, new git repo.
@@ -64,9 +64,9 @@ Core tables: `signals`, `alerts`, `facts` (+embedding), `people`, `commitments`,
 ## Key components
 
 - **Connector protocol**: `poll(state) -> (signals, new_state)`. Idempotent via `external_id`. Each gets scheduler job (Gmail/Outlook every 2 min via delta/history APIs; calendar every 10 min; Slack push via Socket Mode).
-- **Triage**: rules first (calendar in 15 min → nudge, no LLM). Rest batched to Nova 2 Lite w/ structured output: `{tier, summary, due_at, action_hint, people[], commitments[]}`. Extracted commitments/people update memory.
+- **Triage**: rules first (calendar in 15 min → nudge, no LLM). Rest batched to `Brain.fast` (cheapest Nova by default) w/ structured output: `{tier, summary, due_at, action_hint, people[], commitments[]}`. Extracted commitments/people update memory.
 - **Brain**: `complete(messages, tools, schema)`. Bedrock implementation v1. OpenRouter impl trivial later (same interface).
-- **Memory**: explicit ("remember X" from Telegram) + extracted. Embeddings via Bedrock Titan Text v2. Retrieval feeds triage prompt + agent loop.
+- **Memory**: explicit ("remember X" from Telegram) + extracted. Embeddings via Bedrock (Titan Text v2 or cheapest embedding model available; verify at Phase 2). Retrieval feeds triage prompt + agent loop.
 - **Notifier**: Telegram, allowlisted user id. Buttons: done / snooze 1h / snooze tomorrow / more. Callback updates alert, SSE pushes to dashboard.
 - **Agent loop**: Nova tool-use loop, max N steps, tools = search_memory, list_alerts, create_reminder, search_mail, calendar_today, remember_fact.
 - **Morning brief**: 07:30 job → calendar + open alerts + owed replies → one Telegram message (voice in v2).
