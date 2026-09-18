@@ -88,11 +88,11 @@ Bedrock only (data stays in AWS), routed by role via `Brain`:
 - **Weekly report** (Sunday): alert precision (acted / sent), misses, top noisy senders, rules added. Telegram + dashboard chart.
 - Phase mapping: feedback capture in Phase 2; scores + case-based in Phase 3; reflection + weekly in new **Phase 6** (dashboard becomes 7, deploy 8).
 
-## Infrastructure as Code (Terraform, pipelines only — never applied from laptop)
+## Infrastructure as Code (Terraform, pipelines only — except the one-time local `bootstrap` apply)
 
 ```
 infra/
-  bootstrap/   one-time: S3 state bucket + DynamoDB lock table + GitHub OIDC provider/role (applied once via workflow_dispatch with local state, then state migrated)
+  bootstrap/   applied ONCE from the maintainer's laptop (CI cannot authenticate before the OIDC role exists): S3 state bucket (native lockfile), GitHub OIDC provider, CI role, permissions boundary
   aws/         IAM user `ned-runtime` (bedrock:InvokeModel* on allowed model ARNs only), Bedrock invocation logging → CloudWatch (14d retention),
                AWS Budgets ($5 alert, $10 alert, monthly), SNS topic for budget alerts, optional Bedrock guardrail
   oci/         compartment, VCN + subnet + security list (egress only; ingress only Tailscale UDP 41641), VM.Standard.A1.Flex 2 OCPU/12GB,
@@ -103,7 +103,7 @@ infra/
 Pipelines (`.github/workflows/`):
 - `infra-aws.yml`, `infra-oci.yml`: on PR touching `infra/<x>/**` → `terraform fmt -check`, `validate`, `tflint`, `trivy config` (IaC scan), `plan` → plan posted as PR comment. On `workflow_dispatch` (manual) → `plan` then `apply` gated by GitHub **environment `prod` with required reviewer** (you). No apply on push.
 - Auth: AWS via GitHub OIDC role (no long-lived keys in CI). OCI via API key in GitHub secrets (OCI has no GH OIDC federation). Tailscale auth key + Telegram/Bedrock secrets → GitHub environment secrets → written to VM `.env` by deploy job, never committed.
-- Remote state: S3 backend + DynamoDB lock, separate state key per root module, versioning + encryption on.
+- Remote state: S3 backend with native lockfile, separate state key per root module, versioning + encryption on.
 - Providers/modules pinned; Dependabot for Terraform, pip, npm, GitHub Actions.
 
 App CI/CD:

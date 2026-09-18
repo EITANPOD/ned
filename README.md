@@ -10,7 +10,7 @@ Phase 0: infra bootstrap + AWS (Terraform via GitHub Actions). See [Infra](#infr
 
 ## Infra
 
-All Terraform runs in GitHub Actions. Nothing is applied from a laptop.
+All Terraform runs in GitHub Actions, with one exception: `infra/bootstrap` is applied from a laptop once (see runbook) because CI cannot authenticate before the OIDC role exists.
 
 | Root module        | State key                     | Trigger                                   |
 |--------------------|-------------------------------|-------------------------------------------|
@@ -43,9 +43,9 @@ Bootstrap is the one Terraform module applied from a laptop, once, because CI ca
    rm -f terraform.tfstate terraform.tfstate.backup
    ```
 
-3. Set repo variable `AWS_TF_ROLE_ARN` from `terraform output -raw ci_role_arn`.
+3. Set repo variable `AWS_TF_ROLE_ARN` from `terraform output -raw ci_role_arn`. Re-apply `infra/bootstrap` locally whenever it changes (same commands, no override file needed once state is in S3).
 4. Create environment `prod` with yourself as required reviewer. Branch protection on `main`: require PR + `lint` and `check` status checks.
 5. Open a PR touching `infra/aws/` → plan appears as a PR comment. Merge.
-6. Actions → `infra-aws` → Run workflow with `action=apply` → approve the `prod` deployment → resources created.
+6. Actions → `infra-aws` → Run workflow with `action=apply` → approve the `prod` deployment → resources created. If it fails on the Bedrock logging configuration with an IAM validation error, re-run the apply once (IAM propagation).
 
 Runtime credentials for Ned are in SSM: `/ned/runtime/aws_access_key_id`, `/ned/runtime/aws_secret_access_key` (SecureString). The deploy job reads them; humans do not need to.

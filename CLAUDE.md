@@ -4,7 +4,7 @@ Ned is a proactive personal chief-of-staff agent. Design: `docs/superpowers/spec
 
 ## Conventions
 - Conventional commits (`feat|fix|refactor|docs|test|chore|perf|ci: …`). No attribution trailers.
-- Terraform is applied only from GitHub Actions (`infra-aws.yml`, gated by environment `prod`). Never from a laptop.
+- Terraform is applied from GitHub Actions (`infra-aws.yml`, gated by environment `prod`). Sole exception: `infra/bootstrap` is applied locally, once, by the maintainer (chicken-and-egg for the OIDC role).
 - Terraform tests use `mock_provider "aws" {}` + `command = apply`; IAM policies are `jsonencode()` locals so tests can assert on them.
 - All AWS resources are named `ned-*`. IAM is least-privilege and resource-scoped; `Resource: "*"` only for list/describe APIs.
 - GitHub Actions pinned to major tags; each job declares the minimum `permissions`.
