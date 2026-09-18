@@ -35,10 +35,7 @@ Bootstrap is the one Terraform module applied from a laptop, once, because CI ca
 
    ```bash
    cd infra/bootstrap
-   printf 'terraform {
-  backend "local" {}
-}
-' > zz_local_override.tf
+   printf 'terraform {\n  backend "local" {}\n}\n' > zz_local_override.tf
    export AWS_PROFILE=<admin-profile> TF_VAR_github_repo=<owner>/<repo> TF_VAR_aws_region=us-east-1 TF_VAR_state_bucket_name=ned-tfstate-<account-id>
    terraform init -reconfigure && terraform apply
    rm zz_local_override.tf
