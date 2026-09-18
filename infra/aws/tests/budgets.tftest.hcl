@@ -44,8 +44,11 @@ run "budget_limits_and_three_notifications" {
     error_message = "budget must have exactly 3 notifications (50% actual, 100% actual, 100% forecasted)"
   }
   assert {
-    condition     = contains([for n in aws_budgets_budget.monthly.notification : n.threshold], 50) && contains([for n in aws_budgets_budget.monthly.notification : n.notification_type], "FORECASTED")
-    error_message = "must include a 50% threshold and a FORECASTED notification"
+    condition = alltrue([
+      for want in [["ACTUAL", 50], ["ACTUAL", 100], ["FORECASTED", 100]] :
+      length([for n in aws_budgets_budget.monthly.notification : n if n.notification_type == want[0] && n.threshold == want[1] && n.comparison_operator == "GREATER_THAN" && n.threshold_type == "PERCENTAGE"]) == 1
+    ])
+    error_message = "must have exactly: 50% ACTUAL, 100% ACTUAL, 100% FORECASTED (GREATER_THAN, PERCENTAGE)"
   }
 }
 

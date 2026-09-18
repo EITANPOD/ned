@@ -47,6 +47,10 @@ run "runtime_policy_scoped_to_bedrock_invoke" {
     condition     = length([for s in jsondecode(aws_iam_policy.runtime_bedrock.policy).Statement : s if s.Resource == "*"]) == 1 && [for s in jsondecode(aws_iam_policy.runtime_bedrock.policy).Statement : s.Sid if s.Resource == "*"][0] == "DiscoverModels"
     error_message = "exactly one statement may use Resource:* and it must be DiscoverModels"
   }
+  assert {
+    condition     = length([for s in jsondecode(aws_iam_policy.runtime_bedrock.policy).Statement : s if s.Sid != "DiscoverModels" && contains(flatten([s.Resource]), "*")]) == 0
+    error_message = "only DiscoverModels may use Resource:*"
+  }
 }
 
 run "runtime_user_named_and_secret_in_ssm" {
