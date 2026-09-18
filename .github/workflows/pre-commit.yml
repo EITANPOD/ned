@@ -1,0 +1,28 @@
+name: pre-commit
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.14.9"
+          terraform_wrapper: false
+      - uses: terraform-linters/setup-tflint@v6
+        with:
+          tflint_version: v0.64.0
+      - run: tflint --init --config "$(pwd)/.tflint.hcl"
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pipx install pre-commit
+      - run: pre-commit run --all-files --show-diff-on-failure
