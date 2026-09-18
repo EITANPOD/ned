@@ -1,0 +1,132 @@
+name: guard
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+  workflow_run:
+    workflows: [claude-review, infra-aws]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: read
+
+concurrency:
+  group: guard-${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    if: github.event_name == 'pull_request' || github.event.workflow_run.pull_requests[0] != null
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: PR facts
+        id: pr
+        run: |
+          gh pr view "$PR" --json headRefOid,baseRefOid,title,author,isDraft,headRepository,url \
+            -q '"head=\(.headRefOid)\nbase=\(.baseRefOid)\ntitle=\(.title)\nactor=\(.author.login)\ndraft=\(.isDraft)\nfork=\(.headRepository.nameWithOwner != env.REPO)\nurl=\(.url)"' >> "$GITHUB_OUTPUT"
+
+      - name: Changed files (name-status)
+        run: |
+          git fetch -q origin "${{ steps.pr.outputs.head }}"
+          git diff --name-status "${{ steps.pr.outputs.base }}...${{ steps.pr.outputs.head }}" > changed.txt
+          # force push: previous head (from PR timeline) not an ancestor of current head
+          prev=$(gh api "repos/$REPO/pulls/$PR/commits" -q 'if length>1 then .[-2].sha else empty end')
+          if [ -n "$prev" ] && ! git merge-base --is-ancestor "$prev" "${{ steps.pr.outputs.head }}"; then echo "FORCE_PUSH=true" >> "$GITHUB_ENV"; else echo "FORCE_PUSH=false" >> "$GITHUB_ENV"; fi
+
+      - name: Latest terraform plan text for this head (if any)
+        run: |
+          rid=$(gh run list --workflow=infra-aws.yml --json databaseId,headSha,status -q "[.[] | select(.headSha==\"${{ steps.pr.outputs.head }}\" and .status==\"completed\")] | first | .databaseId")
+          if [ -n "$rid" ] && [ "$rid" != null ]; then gh run download "$rid" -n plan-text -D plan || true; fi
+          [ -f plan/plan.txt ] && echo "PLAN_FILE=plan/plan.txt" >> "$GITHUB_ENV" || echo "PLAN_FILE=" >> "$GITHUB_ENV"
+
+      - name: Classify
+        id: tier
+        env:
+          PR_TITLE: ${{ steps.pr.outputs.title }}
+          PR_ACTOR: ${{ steps.pr.outputs.actor }}
+        run: bash .github/scripts/guard-tier.sh < changed.txt | tee -a "$GITHUB_OUTPUT"
+
+      - name: Verdicts
+        id: verdicts
+        run: |
+          gh api "repos/$REPO/issues/$PR/comments" --paginate > comments.json
+          gh api "repos/$REPO/pulls/$PR/reviews" --paginate > reviews.json
+          COMMENTS_JSON=comments.json REVIEWS_JSON=reviews.json bash .github/scripts/guard-verdicts.sh | tee -a "$GITHUB_OUTPUT"
+
+      - name: Labels
+        id: labels
+        env:
+          HEAD_SHA: ${{ steps.pr.outputs.head }}
+          TIER: ${{ steps.tier.outputs.tier }}
+        run: bash .github/scripts/guard-labels.sh | tee -a "$GITHUB_OUTPUT"
+
+      - name: Summary
+        run: |
+          {
+            echo "## guard: tier **${{ steps.tier.outputs.tier }}**"
+            echo "- reasons: ${{ steps.tier.outputs.reasons }}"
+            echo "- claude: ${{ steps.verdicts.outputs.claude }} · coderabbit: ${{ steps.verdicts.outputs.coderabbit }}"
+            echo "- human-approved: ${{ steps.labels.outputs.approved }} · allow-destroy: ${{ steps.labels.outputs.destroy_ok }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Alert (medium/high, once per head)
+        if: steps.tier.outputs.tier != 'low'
+        run: |
+          marker="<!-- guard-alerted:${{ steps.pr.outputs.head }} -->"
+          if gh pr view "$PR" --json comments -q '.comments[].body' | grep -qF "$marker"; then echo "already alerted"; exit 0; fi
+          gh pr comment "$PR" --body "$marker guard: tier ${{ steps.tier.outputs.tier }} — Telegram alert sent."
+          echo "ALERT=1" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/telegram-notify
+        if: env.ALERT == '1'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        with:
+          message: |
+            ${{ steps.tier.outputs.tier == 'high' && '🛑 <b>HIGH</b>' || '🟠 <b>MEDIUM</b>' }} | PR #${{ env.PR }} ${{ steps.pr.outputs.title }}
+            Why: ${{ steps.tier.outputs.reasons }}
+            Reviewers: claude=${{ steps.verdicts.outputs.claude }}, coderabbit=${{ steps.verdicts.outputs.coderabbit }}
+            Suggested fix: ${{ steps.verdicts.outputs.suggested_fix || 'n/a' }}
+            <a href="${{ steps.pr.outputs.url }}">PR</a> · approve by adding label <code>human-approved</code>${{ contains(steps.tier.outputs.reasons, 'destroy') && ' + <code>allow-destroy</code>' || '' }}
+
+      - name: Decide
+        run: |
+          tier=${{ steps.tier.outputs.tier }}
+          clean=false
+          [ "${{ steps.verdicts.outputs.claude }}" = pass ] && [ "${{ steps.verdicts.outputs.coderabbit }}" = clean ] && clean=true
+          case "$tier" in
+            low)
+              if [ "$clean" = true ] && [ "${{ steps.pr.outputs.draft }}" = false ] && [ "${{ steps.pr.outputs.fork }}" = false ]; then
+                gh pr merge "$PR" --auto --squash && echo "auto-merge armed"
+              else
+                echo "low tier but not clean/draft/fork — waiting (no block)"
+              fi ;;
+            medium)
+              [ "${{ steps.labels.outputs.approved }}" = true ] || { echo "::error::medium tier: add label human-approved"; exit 1; } ;;
+            high)
+              [ "${{ steps.labels.outputs.approved }}" = true ] || { echo "::error::high tier: add label human-approved"; exit 1; }
+              if echo "${{ steps.tier.outputs.reasons }}" | grep -q destroy; then
+                [ "${{ steps.labels.outputs.destroy_ok }}" = true ] || { echo "::error::plan destroys resources: add label allow-destroy"; exit 1; }
+              fi ;;
+          esac
+
+      - uses: ./.github/actions/telegram-notify
+        if: steps.tier.outputs.tier == 'low' && success()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        with:
+          silent: "true"
+          message: "🟢 low | PR #${{ env.PR }} ${{ steps.pr.outputs.title }} — auto-merge armed (claude=${{ steps.verdicts.outputs.claude }}, coderabbit=${{ steps.verdicts.outputs.coderabbit }})"

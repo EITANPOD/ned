@@ -27,6 +27,29 @@ Every non-draft PR gets two automated reviews:
 Dependabot PRs are skipped by Claude (no secrets on those runs).
 CodeRabbit only auto-reviews repos with 10+ stars; below that, comment `@coderabbitai review` on the PR to trigger it.
 
+### Guardrails (guard check)
+
+Every PR gets a risk tier from `.github/scripts/guard-tier.sh` (paths, terraform plan destroys, Dependabot semver, force-push):
+
+| Tier | Merge | You get |
+|---|---|---|
+| low | auto-merge once `lint`, `check`, `guard` are green and both reviewers report clean | silent Telegram digest |
+| medium | blocked until you add label `human-approved` | Telegram alert with reasons + reviewer's suggested fix |
+| high | blocked until `human-approved` (+ `allow-destroy` for destroys) | same, marked HIGH |
+
+Labels only count when added by an admin after the PR's current head commit; the guard strips stale ones.
+Reviewer verdicts are machine-read: Claude must post `VERDICT: PASS` or `VERDICT: HUMAN REVIEW REQUIRED` + `Suggested fix:`; CodeRabbit must report `Actionable comments posted: 0`.
+
+One-time setup: secrets `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (create the bot with @BotFather, `/start` it, read your chat id from `getUpdates`); enable auto-merge on the repo; add `guard` to the required checks:
+
+```bash
+gh api -X PATCH repos/<owner>/<repo> -f allow_auto_merge=true
+gh api -X PUT repos/<owner>/<repo>/branches/main/protection --input - <<'EOF'
+{"required_status_checks":{"strict":true,"contexts":["lint","check","guard"]},"enforce_admins":false,"required_pull_request_reviews":null,"restrictions":null,"allow_force_pushes":false,"allow_deletions":false,"required_linear_history":true}
+EOF
+```
+Test the bot: Actions → `telegram-ping` → Run.
+
 ### First-time bootstrap runbook
 
 Bootstrap is the one Terraform module applied from a laptop, once, because CI cannot authenticate before the OIDC role exists. It creates: the state bucket, the GitHub OIDC provider, and the CI role `ned-github-terraform`.
