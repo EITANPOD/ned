@@ -1542,6 +1542,140 @@ git checkout main && git pull
 
 ---
 
+### Task 8: Automated PR reviewers (Claude Code Action via OAuth token + CodeRabbit)
+
+Execution order: run this task BEFORE Task 7 so the first PR already gets reviewed.
+
+**Files:**
+- Create: `.github/workflows/claude-review.yml`, `.coderabbit.yaml`, `CLAUDE.md`
+- Modify: `README.md` (add "PR review bots" subsection under Infra)
+
+**Interfaces:**
+- Consumes: repo secret `CLAUDE_CODE_OAUTH_TOKEN` (set by Eitan in Task 7 via `claude setup-token`), Claude GitHub App + CodeRabbit App installed on the repo (Task 7).
+- Produces: on every non-draft PR (not Dependabot), one sticky Claude review comment + inline comments; CodeRabbit summary + inline comments.
+
+- [ ] **Step 1: Write `CLAUDE.md`** (read by Claude Code Action for project context)
+
+```markdown
+# Ned — project rules for Claude
+
+Ned is a proactive personal chief-of-staff agent. Design: `docs/superpowers/specs/2026-09-18-ned-design.md`.
+
+## Conventions
+- Conventional commits (`feat|fix|refactor|docs|test|chore|perf|ci: …`). No attribution trailers.
+- Terraform is applied only from GitHub Actions (`infra-aws.yml`, gated by environment `prod`). Never from a laptop.
+- Terraform tests use `mock_provider "aws" {}` + `command = apply`; IAM policies are `jsonencode()` locals so tests can assert on them.
+- All AWS resources are named `ned-*`. IAM is least-privilege and resource-scoped; `Resource: "*"` only for list/describe APIs.
+- GitHub Actions pinned to major tags; each job declares the minimum `permissions`.
+- Secrets never in git. Runtime secrets live in SSM under `/ned/`.
+- Python 3.12 + FastAPI backend, Next.js dashboard, Postgres + pgvector (later phases).
+
+## Review priorities (in order)
+1. Security: leaked secrets, over-broad IAM/workflow permissions, unpinned actions.
+2. Correctness bugs and spec drift from the design doc.
+3. Over-engineering: unrequested abstractions, config for constants, speculative code.
+4. Test hygiene: tests must assert real behavior; no warnings in output.
+Skip formatting nits — pre-commit owns them.
+```
+
+- [ ] **Step 2: Write `.github/workflows/claude-review.yml`**
+
+```yaml
+name: claude-review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: read
+  id-token: write
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: github.event.pull_request.draft == false && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          use_sticky_comment: true
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            Review this pull request against the rules in CLAUDE.md. Report only
+            concrete problems: security issues, correctness bugs, drift from the
+            design spec, over-engineering, weak tests. Skip style nits.
+
+            Post ONE overall comment with `gh pr comment` (verdict + at most five
+            bullets). Use the inline comment tool (confirmed: true) only for
+            defects you can point to by file and line. If nothing is wrong, say
+            so in one line.
+          claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)" --model claude-haiku-4-5-20251001'
+```
+
+- [ ] **Step 3: Write `.coderabbit.yaml`**
+
+```yaml
+language: en-US
+
+reviews:
+  profile: chill
+  auto_review:
+    enabled: true
+    drafts: false
+  high_level_summary: true
+  poem: false
+  path_filters:
+    - "!docs/**"
+    - "!.superpowers/**"
+  path_instructions:
+    - path: "infra/**"
+      instructions: "Terraform: check least-privilege IAM (resource-scoped, no Action:*), ned- naming, no secrets in code, tests assert real behavior."
+    - path: ".github/workflows/**"
+      instructions: "GitHub Actions: actions pinned to major tags, minimal per-job permissions, no apply on push, no long-lived cloud keys."
+```
+
+- [ ] **Step 4: Add README subsection** (under `## Infra`, after the table)
+
+```markdown
+### PR review bots
+
+Every non-draft PR gets two automated reviews:
+- **Claude Code Action** (`claude-review.yml`) — reads `CLAUDE.md`, posts one sticky verdict comment + inline defects. Auth: `CLAUDE_CODE_OAUTH_TOKEN` secret from `claude setup-token` (Pro/Max subscription).
+- **CodeRabbit** — free on public repos, config in `.coderabbit.yaml`.
+Dependabot PRs are skipped by Claude (no secrets on those runs).
+```
+
+- [ ] **Step 5: Lint**
+
+Run: `pre-commit run --all-files`
+Expected: all Passed/Skipped.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add CLAUDE.md .github/workflows/claude-review.yml .coderabbit.yaml README.md
+git commit -m "ci: automated PR review via Claude Code Action and CodeRabbit"
+```
+
+- [ ] **Step 7: USER ACTIONS (after the repo exists, in Task 7)**
+
+1. Install the Claude GitHub App on `EITANPOD/ned`: https://github.com/apps/claude
+2. Locally: `claude setup-token` → copy token → `gh secret set CLAUDE_CODE_OAUTH_TOKEN` (interactive; the agent never sees the value).
+3. Install CodeRabbit on the repo: https://github.com/marketplace/coderabbitai (sign in with GitHub, select the public repo).
+Verification: the first PR in Task 7 Step 9 shows a CodeRabbit summary and a Claude sticky comment within a few minutes.
+
+---
+
 ## Self-review notes
 
 - Spec coverage: bootstrap (bucket, lock via `use_lockfile`, OIDC role) ✔ Task 2–3; IAM user least-priv ✔ Task 4; invocation logging 14d ✔ Task 5; budgets $5/$10 + SNS ✔ Task 5; PR plan comment + manual gated apply + fmt/validate/tflint/trivy ✔ Task 6; OIDC auth, no long-lived CI keys ✔; Dependabot, pre-commit, gitleaks, CODEOWNERS, branch protection ✔ Task 1 & 7. Optional Bedrock guardrail deliberately skipped (spec: optional). DynamoDB lock table replaced by S3 native lockfile (Terraform ≥1.10) — simpler, same guarantee.
