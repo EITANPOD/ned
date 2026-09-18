@@ -1,0 +1,63 @@
+name: infra-bootstrap (one-time)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "bootstrap" to confirm. Runs with temporary bootstrap keys.'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infra-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    if: ${{ inputs.confirm == 'bootstrap' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/bootstrap
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_BOOTSTRAP_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_BOOTSTRAP_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      TF_VAR_github_repo: ${{ github.repository }}
+      TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+      TF_VAR_state_bucket_name: ${{ vars.TF_STATE_BUCKET }}
+      TF_IN_AUTOMATION: "true"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.14.9"
+          terraform_wrapper: false
+
+      - name: Apply with local state
+        run: |
+          terraform init -backend=false -input=false
+          terraform apply -auto-approve -input=false
+
+      - name: Migrate state into the new bucket
+        run: |
+          terraform init -input=false -force-copy -migrate-state \
+            -backend-config="bucket=${TF_VAR_state_bucket_name}" \
+            -backend-config="region=${AWS_REGION}"
+          terraform plan -input=false -detailed-exitcode
+
+      - name: Publish outputs
+        run: |
+          {
+            echo '## Bootstrap outputs'
+            echo
+            echo "Set these as repo **variables**:"
+            echo
+            echo "- AWS_TF_ROLE_ARN = $(terraform output -raw ci_role_arn)"
+            echo "- TF_STATE_BUCKET = $(terraform output -raw state_bucket)"
+            echo
+            echo 'Now delete the bootstrap IAM user + the two AWS_BOOTSTRAP_* secrets.'
+          } >> "$GITHUB_STEP_SUMMARY"
