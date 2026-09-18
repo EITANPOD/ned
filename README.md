@@ -37,8 +37,11 @@ Every PR gets a risk tier from `.github/scripts/guard-tier.sh` (paths, terraform
 | medium | blocked until you add label `human-approved` | Telegram alert with reasons + reviewer's suggested fix |
 | high | blocked until `human-approved` (+ `allow-destroy` for destroys) | same, marked HIGH |
 
-Labels only count when added by an admin after the PR's current head commit; the guard strips stale ones.
+Labels only count when added by a repo admin; any push to the PR branch strips `human-approved` and `allow-destroy`, so they always describe the current head.
+
 Reviewer verdicts are machine-read: Claude must post `VERDICT: PASS` or `VERDICT: HUMAN REVIEW REQUIRED` + `Suggested fix:`; CodeRabbit must report `Actionable comments posted: 0`.
+
+Known limitation: auto-merged PRs do not trigger `push` workflows on `main` (GitHub does not fan out events from `GITHUB_TOKEN`). The PR's own checks are the verification; `main-red` covers manual dispatches. A GitHub App token can lift this later.
 
 One-time setup: secrets `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (create the bot with @BotFather, `/start` it, read your chat id from `getUpdates`); enable auto-merge on the repo; add `guard` to the required checks:
 

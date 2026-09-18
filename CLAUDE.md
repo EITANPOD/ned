@@ -32,3 +32,10 @@ Otherwise end the review with `VERDICT: PASS`. The verdict line is machine-read 
 ## Rules for agents working in this repo
 - Never merge, apply Terraform, force-push, or touch secrets/variables. Open a PR; the guard check decides.
 - Something unusual (drift, failing apply, unclear spec) → stop and say so in the PR; the human gets a Telegram alert.
+
+## Engineering standards (this is a showcase repo)
+- Structure: `infra/modules/<one purpose>` + `infra/envs/<env>` root configs; app code under `apps/<service>`; one responsibility per file; 200–400 lines typical.
+- Reuse before writing: official or community-standard modules/libraries when they cover the need (e.g. terraform-aws-modules); custom code only for what is specific to Ned.
+- Security by default: least privilege, pinned versions, secrets only in SSM/GitHub secrets, no `${{ }}` inside `run:` blocks, permissions boundaries on created principals.
+- YAGNI and no repetition: no speculative abstractions; duplicated logic becomes a module/function.
+- Every non-trivial change ships with a test and a doc line; refactors of live infra use `moved {}` blocks, never destroy/recreate.
