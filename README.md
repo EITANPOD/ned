@@ -37,7 +37,7 @@ Every PR gets a risk tier from `.github/scripts/guard-tier.sh` (paths, terraform
 | medium | blocked until you add label `human-approved` | Telegram alert with reasons + reviewer's suggested fix |
 | high | blocked until `human-approved` (+ `allow-destroy` for destroys) | same, marked HIGH |
 
-Labels only count when added by a repo admin after the current head was pushed (GitHub's own timestamps: the label event vs. the head's first check suite); any push also strips `human-approved` and `allow-destroy`. With `strict: true` branch protection, "Update branch" is a push too, so it needs a fresh `human-approved`.
+Labels only count when added by a repo admin after the current head was pushed (GitHub's own timestamps: the label event vs. the first guard run for that head on the PR); any push also strips `human-approved` and `allow-destroy`. With `strict: true` branch protection, "Update branch" is a push too, so it needs a fresh `human-approved`.
 
 Reviewer verdicts are machine-read and bound to the current head: Claude (`claude[bot]` only) must post `VERDICT: PASS` or `VERDICT: HUMAN REVIEW REQUIRED` + `Suggested fix:` after the head was pushed; CodeRabbit counts only for a review of this exact commit. CodeRabbit with no review does not block Low (it needs a manual `@coderabbitai review` below 10 stars); CodeRabbit with findings does. A Low PR that stops being clean has auto-merge disabled.
 
@@ -45,12 +45,12 @@ Known limitation, agent identity: agent sessions currently use the maintainer's 
 
 Known limitation: auto-merged PRs do not trigger `push` workflows on `main` (GitHub does not fan out events from `GITHUB_TOKEN`). The PR's own checks are the verification; `main-red` covers manual dispatches. A GitHub App token can lift this later.
 
-One-time setup: secrets `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (create the bot with @BotFather, `/start` it, read your chat id from `getUpdates`); enable auto-merge on the repo; add `guard` to the required checks:
+One-time setup: secrets `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (create the bot with @BotFather, `/start` it, read your chat id from `getUpdates`); enable auto-merge on the repo; add `guard` to the required checks. `app_id` 15368 is GitHub Actions, so only Actions runs can satisfy `lint`/`check`/`guard` (a commit status with the same name from anyone else does not count); `enforce_admins` makes the gate apply to admins too:
 
 ```bash
 gh api -X PATCH repos/<owner>/<repo> -f allow_auto_merge=true
 gh api -X PUT repos/<owner>/<repo>/branches/main/protection --input - <<'EOF'
-{"required_status_checks":{"strict":true,"contexts":["lint","check","guard"]},"enforce_admins":false,"required_pull_request_reviews":null,"restrictions":null,"allow_force_pushes":false,"allow_deletions":false,"required_linear_history":true}
+{"required_status_checks":{"strict":true,"checks":[{"context":"lint","app_id":15368},{"context":"check","app_id":15368},{"context":"guard","app_id":15368}]},"enforce_admins":true,"required_pull_request_reviews":null,"restrictions":null,"allow_force_pushes":false,"allow_deletions":false,"required_linear_history":true}
 EOF
 ```
 Test the bot: Actions → `telegram-ping` → Run.
