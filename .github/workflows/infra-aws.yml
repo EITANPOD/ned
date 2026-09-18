@@ -58,6 +58,7 @@ jobs:
 
   plan:
     needs: check
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -98,7 +99,7 @@ jobs:
         with:
           name: tfplan
           path: infra/aws/plan.txt
-          retention-days: 1
+          retention-days: 5
       # tfplan embeds prior state (incl. sensitive values); never publish it as an artifact on a public repo.
       - name: Stash plan in state bucket (dispatch only)
         if: github.event_name == 'workflow_dispatch'
@@ -115,7 +116,7 @@ jobs:
             tail -c 60000 plan.txt
             echo '```'
           } > comment.md
-          gh pr comment ${{ github.event.pull_request.number }} --body-file comment.md
+          gh pr comment ${{ github.event.pull_request.number }} --body-file comment.md --edit-last --create-if-none
 
   apply:
     if: github.event_name == 'workflow_dispatch' && inputs.action == 'apply' && needs.plan.outputs.exitcode == '2'
