@@ -28,3 +28,4 @@ jobs:
           python-version: "3.12"
       - run: pipx install pre-commit
       - run: pre-commit run --all-files --show-diff-on-failure
+      - run: bash tests/guard/run.sh
