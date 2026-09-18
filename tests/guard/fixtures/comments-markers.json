@@ -14,5 +14,13 @@
   },
   "body": "<!-- guard-digest:abc123 --> digest",
   "created_at": "2026-09-18T11:00:00Z"
+ },
+ {
+  "user": {
+   "login": "github-actions[bot]",
+   "type": "Bot"
+  },
+  "body": "quoting: <!-- guard-forcepush:abc123 -->",
+  "created_at": "2026-09-18T11:00:00Z"
  }
 ]

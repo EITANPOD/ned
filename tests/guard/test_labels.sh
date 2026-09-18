@@ -25,6 +25,10 @@ case "$*" in
       jq -cn --arg a "$FAKE_EVENT_ACTOR" '[{event:"commented",actor:{login:"bob"},created_at:"2026-09-18T11:00:00Z"},
         {event:"labeled",label:{name:"human-approved"},actor:{login:$a},created_at:"2026-09-18T12:00:00Z"}]'
     fi ;;
+  *"/actions/workflows/guard.yml/runs"*)
+    case "$*" in *--paginate*) ;; *) echo "fake gh: runs called without --paginate" >&2; exit 99 ;; esac
+    echo '{"workflow_runs":[{"id":1,"created_at":"2026-09-18T10:00:00Z","pull_requests":[]},{"id":2,"created_at":"2026-09-18T09:00:00Z","pull_requests":[{"number":2}]}]}'
+    echo '{"workflow_runs":[{"id":3,"created_at":"2026-09-18T11:00:00Z","pull_requests":[{"number":1}]}]}' ;;
   *"/permission"*)   printf '%s\n' "${FAKE_PERM:-write}" ;;
 esac
 exit 0
@@ -88,5 +92,10 @@ assert_contains "$(cat "$FAKE_GH_LOG")" "--remove-label human-approved" "stale l
 # 8. the shim itself rejects --slurp with --jq, like real gh
 set +e; gh api x --paginate --slurp -q . >/dev/null 2>&1; rc=$?; set -e
 assert_eq 98 "$rc" "shim rejects --slurp with -q"
+
+# 9. guard-head-runs.sh: all pages, runs of other PRs dropped (min = HEAD_TIME, max = run to re-run)
+runs=$(REPO=o/r PR=1 bash "$(dirname "$script")/guard-head-runs.sh" abc123)
+assert_eq "2026-09-18T10:00:00Z" "$(jq -r 'map(.created_at) | min' <<<"$runs")" "HEAD_TIME ignores another PR's earlier run"
+assert_eq 3 "$(jq -r 'max_by(.created_at) | .id' <<<"$runs")" "latest run for this PR is picked for re-run"
 
 echo "ok labels"

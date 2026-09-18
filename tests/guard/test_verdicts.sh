@@ -28,4 +28,5 @@ assert_contains "$(v comments-spoof.json reviews-none.json)" "claude=missing" "n
 M=../../.github/scripts/guard-marked.sh
 COMMENTS_JSON=fixtures/comments-markers.json bash "$M" "<!-- guard-digest:abc123 -->" || _fail "guard marker found"
 if COMMENTS_JSON=fixtures/comments-markers.json bash "$M" "<!-- guard-alerted:abc123 -->"; then _fail "forged marker ignored"; fi
+if COMMENTS_JSON=fixtures/comments-markers.json bash "$M" "<!-- guard-forcepush:abc123 -->"; then _fail "marker must start the body"; fi
 echo "ok verdicts"

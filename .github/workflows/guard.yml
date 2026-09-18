@@ -9,24 +9,50 @@ on:
     workflows: [claude-review, infra-aws]
     types: [completed]
 
-permissions:
-  contents: write
-  pull-requests: write
-  issues: write
-  actions: read
+permissions: {} # per job below
 
 concurrency:
   group: guard-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
 
 jobs:
-  guard:
-    if: github.event_name == 'pull_request_target' || github.event.workflow_run.pull_requests[0] != null
+  # A reviewer or plan landed: re-run the PR's own guard run, so the required check on the PR head is re-evaluated
+  # in place. This job never evaluates anything itself (workflow_run executes on main, off the PR's check context).
+  rerun:
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.pull_requests[0] != null
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout of main for the helper script
+      actions: write # gh run rerun
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
-      PR: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
+      PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+      HEAD: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Re-run the latest guard run for this head
+        run: |
+          id=$(bash .github/scripts/guard-head-runs.sh "$HEAD" | jq -r 'max_by(.created_at) | .id // empty')
+          [ -n "$id" ] || { echo "no guard run for $HEAD yet; the pull_request_target run will see the result"; exit 0; }
+          # A run still in progress cannot be re-run; wait for it (bounded), then re-run so it reads the new evidence.
+          timeout 600 gh run watch "$id" >/dev/null 2>&1 || true
+          gh run rerun "$id"
+
+  guard:
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
     steps:
       # Default ref = the base branch (main): trusted code only.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -40,9 +66,9 @@ jobs:
         run: |
           gh pr view "$PR" --json headRefOid,baseRefOid,headRefName,title,author,isDraft,isCrossRepository > pr.json
           head=$(jq -r .headRefOid pr.json)
-          # HEAD_TIME: when GitHub first saw this head (earliest check suite), server-set. Approvals must be newer.
-          # No suite yet → now, so nothing older can count (fail closed).
-          head_time=$(gh api "repos/$REPO/commits/$head/check-suites" --paginate | jq -rs '[.[].check_suites[].created_at] | min // empty')
+          # HEAD_TIME: when this head arrived on this PR = earliest guard run for it (server-set; includes this run).
+          # Nothing found → now, so nothing older can count (fail closed).
+          head_time=$(bash .github/scripts/guard-head-runs.sh "$head" | jq -r 'map(.created_at) | min // empty')
           {
             printf 'head=%s\n' "$head"
             printf 'head_time=%s\n' "${head_time:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
@@ -66,10 +92,11 @@ jobs:
           echo "fork PR: guard reports tier only, no labels/merge" >> "$GITHUB_STEP_SUMMARY"
 
       # UX only: any push drops the human labels. The binding rule is in guard-labels.sh (label newer than
-      # HEAD_TIME), which still holds if this step is cancelled by a newer run.
+      # HEAD_TIME), which still holds if this step is cancelled by a newer run. First attempt only: re-runs
+      # (triggered by the rerun job) replay the synchronize payload and must not strip labels added since.
       - name: Strip human labels on new commits
         if: >-
-          github.event_name == 'pull_request_target' && github.event.action == 'synchronize' &&
+          github.event.action == 'synchronize' && github.run_attempt == 1 &&
           steps.pr.outputs.fork == 'false'
         run: |
           for l in human-approved allow-destroy; do
@@ -121,7 +148,7 @@ jobs:
           if [ -n "$rid" ]; then
             gh run download "$rid" -n plan-text -D "$RUNNER_TEMP/plan" || true
           else
-            # No completed infra-aws run for this head yet: the workflow_run re-trigger will alert with the real tier.
+            # No completed infra-aws run for this head yet: the rerun job re-runs this check when it completes.
             echo "SKIP_ALERT=1" >> "$GITHUB_ENV"
           fi
           if [ -f "$RUNNER_TEMP/plan/plan.txt" ]; then
@@ -214,7 +241,8 @@ jobs:
       - name: Decide
         id: decide
         env:
-          EVENT: ${{ github.event_name }}
+          HEAD: ${{ steps.pr.outputs.head }}
+          REASONS: ${{ steps.tier.outputs.reasons }}
           TIER: ${{ steps.tier.outputs.tier }}
           DESTROYS: ${{ steps.tier.outputs.destroys }}
           CLAUDE_V: ${{ steps.verdicts.outputs.claude }}
@@ -231,7 +259,7 @@ jobs:
           if { [ "$CLAUDE_V" = pass ] || [ "$ACTOR" = "dependabot[bot]" ]; } && [ "$CR_V" != findings ]; then clean=true; fi
           armed=false
           if [ "$TIER" = low ] && [ "$clean" = true ] && [ "$DRAFT" = false ] && [ "$FORK" = false ]; then
-            gh pr merge "$PR" --auto --squash >/dev/null
+            gh pr merge "$PR" --auto --squash --match-head-commit "$HEAD" >/dev/null
             armed=true
             echo "auto-merge armed"
           else
@@ -240,9 +268,8 @@ jobs:
             echo "auto-merge not armed (tier=$TIER clean=$clean draft=$DRAFT fork=$FORK)"
           fi
           echo "armed=$armed" >> "$GITHUB_OUTPUT"
-          # workflow_run runs execute on main, so their check lands on main's commit: report, never fail.
-          # The blocking check is the pull_request_target run on the PR head.
-          if [ "$EVENT" = workflow_run ]; then echo "workflow_run: report only"; exit 0; fi
+          # No plan yet for an infra change: never pass, whatever the labels (the rerun job re-evaluates when it lands).
+          case "$REASONS" in *"no terraform plan available"*) echo "::error::waiting for terraform plan for this head"; exit 1;; esac
           case "$TIER" in
             low) ;;
             medium)
