@@ -8,10 +8,10 @@ bump() { # bump <level> <reason>
 }
 
 touches_infra=false
-while IFS=$'\t' read -r status path; do
+while IFS=$'\t' read -r status path || [ -n "${status:-}" ]; do
   [ -z "${path:-}" ] && continue
   case "$path" in
-    infra/bootstrap/*) bump high "infra/bootstrap changed ($path)";;
+    infra/bootstrap/*) touches_infra=true; bump high "infra/bootstrap changed ($path)";;
     .github/workflows/guard.yml|.github/actions/*|.github/scripts/*) bump high "guard/notify tooling changed ($path)";;
     .claude/*|CLAUDE.md|.coderabbit.yaml|.github/CODEOWNERS) bump high "agent/reviewer rules changed ($path)";;
     infra/aws/*) touches_infra=true; bump medium "infra/aws changed ($path)";;
