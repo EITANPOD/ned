@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 source "$(dirname "$0")/lib.sh"
-H=../../.claude/hooks/pre-tool-guard.sh
+H=$(cd "$(dirname "$0")/../.." && pwd)/.claude/hooks/pre-tool-guard.sh
 ERR=$(mktemp)
 blocked() { jq -cn --arg c "$1" '{tool_name:"Bash",tool_input:{command:$c}}' | bash "$H" 2>"$ERR"; echo $?; }
 block=(
@@ -35,6 +35,13 @@ block=(
   # terraform state surgery
   "terraform state push x.tfstate" "terraform state mv a b" "terraform force-unlock 123" "terraform taint aws_x.y"
   "terraform untaint aws_x.y" "terraform -chdir=infra state rm x"
+  # round 2: quotes stripped, xargs prefix, labels only when writing, graphql read-only, -D only
+  "git push origin 'main'" "git push origin HEAD:\"main\"" "gh api -X \"DELETE\" repos/a/b" "\"terraform\" apply"
+  "xargs terraform apply" "xargs -0 rm -rf" "gh api --method=POST repos/o/r/issues/3/labels" "gh api -XDELETE repos/o/r/issues/3/labels/x"
+  "gh api repos/o/r/issues/3/labels -F labels[]=x" "gh api repos/o/r/issues/3/labels --input body.json"
+  "gh api graphql -F query=@q.graphql" "gh api graphql -f query='{ viewer { login } }'"
+  "gh api graphql -f query='query { a }' -f query='mutation { b }'" "gh api graphql --input q.json"
+  "gh api graphql -f query='query { a } mutation { b }' -f operationName=b"
   # s3api deletes
   "aws s3api delete-object --bucket b --key k" "aws --profile p s3api delete-bucket --bucket b"
 )
@@ -48,10 +55,25 @@ allow=(
   "gh api repos/a/b" "gh api --method GET repos/a/b"
   # text inside arguments never matches
   "git commit -m \"docs: terraform apply\"" "gh pr create --body \"never gh pr merge\"" "echo 'rm -rf /' > notes.txt"
-  "gh pr edit 3 --title x" "gh api graphql -f query='{ viewer { login } }'" "git push origin mainline" "aws s3api list-buckets"
+  "gh pr edit 3 --title x" "gh api graphql -f query='query { viewer { login } }'" "git push origin mainline" "aws s3api list-buckets"
+  "gh api repos/o/r/issues/3/labels" "gh api graphql -f query='query { repository(owner:\"o\", name:\"r\") { labels(first:5) { nodes { name } } } }'"
+  "git branch -d merged-branch"
 )
 for c in "${allow[@]}"; do
   assert_eq 0 "$(blocked "$c")" "allow: $c"
 done
+# bare `git push` / `git push <remote>` on main pushes main: blocked there, allowed on a feature branch
+repo=$(mktemp -d)
+git -C "$repo" init -q -b main
+git -C "$repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+for c in "git push" "git push origin" "git push -u origin"; do
+  assert_eq 2 "$(cd "$repo" && blocked "$c")" "block on main: $c"
+done
+git -C "$repo" checkout -q -b feature
+for c in "git push" "git push origin"; do
+  assert_eq 0 "$(cd "$repo" && blocked "$c")" "allow on feature: $c"
+done
+assert_eq 0 "$(cd "$repo" && blocked "git push -u origin feature")" "allow on feature: explicit refspec"
+
 printf '{"tool_name":"Read","tool_input":{"file_path":"x"}}' | bash "$H"; assert_eq 0 $? "non-bash tools pass"
 echo "ok hook"

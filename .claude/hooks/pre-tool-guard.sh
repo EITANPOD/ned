@@ -22,13 +22,12 @@ rules=(
   # force/delete flags, +ref, :ref, or main as the target
   "${GIT}${F}push${ARGS}${F}(--force[^[:space:]]*|--delete|-[a-z]*[fd][a-z]*|\+[^[:space:]]+|:[^[:space:]]*|(([^[:space:]]*:)?(refs/heads/)?main))${END}"
   "${GIT}${F}reset${F}--hard"
-  "${GIT}${F}branch${ARGS}${F}-D${END}"
   "gh${F}pr${F}merge"
   "gh${F}(pr|issue)${F}edit${ARGS}${F}--add-label"
   "gh${F}secret"
   "gh${F}variable${F}set"
   "gh${F}api${ARGS}${F}(-X|--method)(=|[[:space:]]*)(DELETE|PUT|PATCH)${END}"
-  "gh${F}api${ARGS}${F}[^[:space:]]*/(merges?|labels)([/?[:space:]]|$)"
+  "gh${F}api${ARGS}${F}[^[:space:]]*/merges?([/?[:space:]]|$)"
   "${AWS}${F}iam${END}"
   "${AWS}${F}s3${F}r[mb]${END}"
   "${AWS}${F}s3api${F}delete-"
@@ -43,7 +42,7 @@ strip() { # drop leading wrappers until the segment starts with the real command
     prev=$s
     s="${s#"${s%%[![:space:]\(\{\!]*}"}"
     if [[ $s =~ ^[a-z_][a-z0-9_]*=(\"[^\"]*\"|\'[^\']*\'|[^[:space:]]*)[[:space:]]*(.*)$ ]]; then s=${BASH_REMATCH[2]}; fi
-    if [[ $s =~ ^(env|command|sudo|exec|nohup|time|eval)(${OPT})${F}(.*)$ ]]; then s=${BASH_REMATCH[4]}; fi
+    if [[ $s =~ ^(env|command|sudo|exec|nohup|time|eval|xargs)(${OPT})${F}(.*)$ ]]; then s=${BASH_REMATCH[4]}; fi
     if [[ $s =~ ^(bash|sh|zsh|dash)(${F}-[^[:space:]]+)*${F}-[a-z]*c[a-z]*${F}(.*)$ ]]; then s=${BASH_REMATCH[3]}; fi
     s="${s#[\'\"]}"
     s="${s%"${s##*[![:space:]\)\}\'\"]}"}"   # trailing space, quotes, ) } left by $( … ) or bash -c '…'
@@ -64,6 +63,35 @@ rm_rf() { # rm with both a recursive and a force flag, any order/case/long form
   ((r && f))
 }
 
+labels_write() { # gh api …/labels with a mutating method or request fields (GET stays allowed)
+  [[ $1 =~ ^gh${F}api${F} && $1 =~ /labels([/?[:space:]]|$) ]] || return 1
+  [[ $1 =~ ${F}(-X|--method)(=|[[:space:]]*)(POST|PUT|PATCH|DELETE)${END} || $1 =~ ${F}(-f|--field|--raw-field|--input)([=[:space:]]|$) ]]
+}
+
+graphql_unsafe() { # gh api graphql is allowed only when every -f/-F query= value is a read query
+  local s=$1 found=0
+  [[ $s =~ ^gh${F}api${F}(.*[[:space:]])?graphql${END} ]] || return 1
+  [[ $s =~ mutation || $s =~ ${F}--input([=[:space:]]|$) ]] && return 0
+  while [[ $s =~ (^|[[:space:]])(-f|--field|--raw-field)(=|[[:space:]]+)query=(.*)$ ]]; do
+    s=${BASH_REMATCH[4]}; found=1
+    [[ $s == query* ]] || return 0   # mutation, @file, or anything else
+  done
+  ((found == 0))
+}
+
+push_from_main() { # bare `git push` / `git push <remote>` pushes the current branch; block it on main
+  [[ $1 =~ ^${GIT}${F}push(${F}-[^[:space:]]+)*(${F}[^-[:space:]][^[:space:]]*)?(${F}-[^[:space:]]+)*$ ]] || return 1
+  [[ $(git rev-parse --abbrev-ref HEAD 2>/dev/null) == main ]]
+}
+
+branch_force_delete() { # case-sensitive on purpose: -D force-deletes, -d is the safe merged-only delete
+  local hit=1
+  shopt -u nocasematch
+  [[ $1 =~ ^${GIT}${F}branch${ARGS}${F}-D${END} ]] && hit=0
+  shopt -s nocasematch
+  return $hit
+}
+
 block() {
   cat >&2 <<EOF
 Blocked by Ned guardrails: '$1' is not allowed from an agent session.
@@ -75,9 +103,11 @@ EOF
 segments=${cmd//\$\(/$'\n'}
 while IFS= read -r seg; do
   seg=$(strip "$seg")
+  seg=${seg//[\'\"]/}   # after strip (which needs quotes for VAR="a b"): 'main', -X "DELETE", "terraform" apply
   [ -n "$seg" ] || continue
   if [[ $seg =~ $deny ]]; then block "${BASH_REMATCH[0]}"; fi
-  if rm_rf "$seg"; then block "$seg"; fi
-  if [[ $seg =~ ^gh${F}api${F}(.*[[:space:]])?graphql${END} && $seg =~ (merge|label) ]]; then block "$seg"; fi
+  for check in rm_rf labels_write graphql_unsafe push_from_main branch_force_delete; do
+    if "$check" "$seg"; then block "$seg"; fi
+  done
 done < <(tr ';|&`' '\n\n\n\n' <<<"$segments")
 exit 0
