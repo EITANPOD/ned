@@ -31,6 +31,8 @@ data "aws_caller_identity" "current" {}
 
 locals {
   account_id = data.aws_caller_identity.current.account_id
-  # Created by infra/bootstrap; the CI role may only create principals carrying it.
-  permissions_boundary_arn = "arn:aws:iam::${local.account_id}:policy/ned-permissions-boundary"
+  # Created by infra/bootstrap; the CI role may only create principals carrying them.
+  # Split by principal type: users get Bedrock, roles get log writes only.
+  user_boundary_arn = "arn:aws:iam::${local.account_id}:policy/ned-user-boundary"
+  role_boundary_arn = "arn:aws:iam::${local.account_id}:policy/ned-role-boundary"
 }

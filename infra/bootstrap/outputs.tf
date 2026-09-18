@@ -8,7 +8,12 @@ output "state_bucket" {
   value       = aws_s3_bucket.state.bucket
 }
 
-output "permissions_boundary_arn" {
-  description = "Attach to every IAM principal created by infra/aws."
-  value       = aws_iam_policy.boundary.arn
+output "user_boundary_arn" {
+  description = "Attach to every IAM user created by infra/aws."
+  value       = aws_iam_policy.user_boundary.arn
+}
+
+output "role_boundary_arn" {
+  description = "Attach to every IAM role created by infra/aws."
+  value       = aws_iam_policy.role_boundary.arn
 }

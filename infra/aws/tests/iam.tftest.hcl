@@ -61,7 +61,7 @@ run "runtime_user_named_and_secret_in_ssm" {
     error_message = "secret key must be a SecureString at /ned/runtime/aws_secret_access_key"
   }
   assert {
-    condition     = endswith(aws_iam_user.runtime.permissions_boundary, ":policy/ned-permissions-boundary")
-    error_message = "runtime user must carry the ned-permissions-boundary"
+    condition     = endswith(aws_iam_user.runtime.permissions_boundary, ":policy/ned-user-boundary")
+    error_message = "runtime user must carry the ned-user-boundary"
   }
 }

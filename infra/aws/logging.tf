@@ -30,7 +30,7 @@ locals {
 resource "aws_iam_role" "bedrock_logging" {
   name                 = "ned-bedrock-logging"
   assume_role_policy   = local.bedrock_logging_trust
-  permissions_boundary = local.permissions_boundary_arn
+  permissions_boundary = local.role_boundary_arn
 }
 
 resource "aws_iam_role_policy" "bedrock_logging_write" {

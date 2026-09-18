@@ -92,7 +92,7 @@ Bedrock only (data stays in AWS), routed by role via `Brain`:
 
 ```
 infra/
-  bootstrap/   applied ONCE from the maintainer's laptop (CI cannot authenticate before the OIDC role exists): S3 state bucket (native lockfile), GitHub OIDC provider, CI role, permissions boundary
+  bootstrap/   applied ONCE from the maintainer's laptop (CI cannot authenticate before the OIDC role exists): S3 state bucket (native lockfile), GitHub OIDC provider, CI role, permissions boundaries (users: Bedrock; roles: logs only)
   aws/         IAM user `ned-runtime` (bedrock:InvokeModel* on allowed model ARNs only), Bedrock invocation logging → CloudWatch (14d retention),
                AWS Budgets ($5 alert, $10 alert, monthly), SNS topic for budget alerts, optional Bedrock guardrail
   oci/         compartment, VCN + subnet + security list (egress only; ingress only Tailscale UDP 41641), VM.Standard.A1.Flex 2 OCPU/12GB,

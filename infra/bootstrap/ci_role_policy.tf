@@ -24,17 +24,19 @@ locals {
         Resource = ["${aws_s3_bucket.state.arn}/aws/*", "${aws_s3_bucket.state.arn}/plans/*"]
       },
       {
-        # Principals may only be created with the permissions boundary attached.
-        Sid    = "NedIamCreateWithBoundary"
-        Effect = "Allow"
-        Action = ["iam:CreateUser", "iam:CreateRole", "iam:PutUserPermissionsBoundary", "iam:PutRolePermissionsBoundary"]
-        Resource = [
-          "arn:aws:iam::${local.account_id}:user/ned-*",
-          "arn:aws:iam::${local.account_id}:role/ned-*",
-        ]
-        Condition = {
-          StringEquals = { "iam:PermissionsBoundary" = aws_iam_policy.boundary.arn }
-        }
+        # Principals may only be created with the matching boundary attached.
+        Sid       = "NedIamCreateUserWithBoundary"
+        Effect    = "Allow"
+        Action    = ["iam:CreateUser", "iam:PutUserPermissionsBoundary"]
+        Resource  = "arn:aws:iam::${local.account_id}:user/ned-*"
+        Condition = { StringEquals = { "iam:PermissionsBoundary" = aws_iam_policy.user_boundary.arn } }
+      },
+      {
+        Sid       = "NedIamCreateRoleWithBoundary"
+        Effect    = "Allow"
+        Action    = ["iam:CreateRole", "iam:PutRolePermissionsBoundary"]
+        Resource  = "arn:aws:iam::${local.account_id}:role/ned-*"
+        Condition = { StringEquals = { "iam:PermissionsBoundary" = aws_iam_policy.role_boundary.arn } }
       },
       {
         Sid    = "NedIamManage"
@@ -89,14 +91,14 @@ locals {
         Resource = "*"
       },
       {
-        # policy/ned-* above would otherwise let CI rewrite the boundary itself.
+        # policy/ned-* above would otherwise let CI rewrite the boundaries themselves.
         Sid    = "DenyBoundaryPolicyEdits"
         Effect = "Deny"
         Action = [
           "iam:CreatePolicyVersion", "iam:DeletePolicyVersion", "iam:SetDefaultPolicyVersion",
           "iam:DeletePolicy", "iam:TagPolicy", "iam:UntagPolicy",
         ]
-        Resource = aws_iam_policy.boundary.arn
+        Resource = [aws_iam_policy.user_boundary.arn, aws_iam_policy.role_boundary.arn]
       },
       {
         Sid    = "Budgets"

@@ -68,8 +68,8 @@ run "ci_role_requires_boundary_on_create" {
   command = apply
 
   assert {
-    condition     = length([for s in jsondecode(aws_iam_role_policy.ci.policy).Statement : s if s.Sid == "NedIamCreateWithBoundary" && try(s.Condition.StringEquals["iam:PermissionsBoundary"], "") != ""]) == 1
-    error_message = "iam:CreateUser/CreateRole must be conditioned on iam:PermissionsBoundary"
+    condition     = length([for s in jsondecode(aws_iam_role_policy.ci.policy).Statement : s if contains(["NedIamCreateUserWithBoundary", "NedIamCreateRoleWithBoundary"], s.Sid) && try(s.Condition.StringEquals["iam:PermissionsBoundary"], "") != ""]) == 2
+    error_message = "iam:CreateUser and iam:CreateRole must each be conditioned on iam:PermissionsBoundary"
   }
   assert {
     condition     = length([for s in jsondecode(aws_iam_role_policy.ci.policy).Statement : s if s.Sid == "NedIamAttachScopedPolicies" && try(s.Condition.ArnLike["iam:PolicyARN"], "") != ""]) == 1
@@ -85,8 +85,12 @@ run "boundary_policy_named" {
   command = apply
 
   assert {
-    condition     = aws_iam_policy.boundary.name == "ned-permissions-boundary"
-    error_message = "boundary policy must be ned-permissions-boundary"
+    condition     = aws_iam_policy.user_boundary.name == "ned-user-boundary"
+    error_message = "user boundary policy must be ned-user-boundary"
+  }
+  assert {
+    condition     = aws_iam_policy.role_boundary.name == "ned-role-boundary"
+    error_message = "role boundary policy must be ned-role-boundary"
   }
 }
 
