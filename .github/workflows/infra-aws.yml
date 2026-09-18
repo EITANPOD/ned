@@ -150,14 +150,23 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
+          marker='<!-- infra-plan -->'
           {
+            echo "$marker"
             echo "### terraform plan (infra/aws) — exit code 2 (changes)"
             echo
             echo '```'
             tail -c 60000 plan.txt
             echo '```'
           } > comment.md
-          gh pr comment "$PR_NUMBER" -R "$REPO" --body-file comment.md --edit-last --create-if-none
+          # Update our own sticky comment (found by its leading marker), else create it.
+          id=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate | jq -rs --arg m "$marker" \
+            '[(add // [])[] | select(.user.login == "github-actions[bot]" and ((.body // "") | startswith($m)))] | last | .id // empty')
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$id" -F body=@comment.md >/dev/null
+          else
+            gh pr comment "$PR_NUMBER" -R "$REPO" --body-file comment.md
+          fi
 
   apply:
     if: github.event_name == 'workflow_dispatch' && inputs.action == 'apply' && needs.plan.outputs.exitcode == '2'
