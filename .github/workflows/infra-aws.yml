@@ -15,8 +15,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
-  pull-requests: write
 
 concurrency:
   group: infra-aws
@@ -61,6 +59,10 @@ jobs:
   plan:
     needs: check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
     defaults:
       run:
         working-directory: infra/aws
@@ -114,6 +116,9 @@ jobs:
     needs: plan
     runs-on: ubuntu-latest
     environment: prod
+    permissions:
+      contents: read
+      id-token: write
     defaults:
       run:
         working-directory: infra/aws
