@@ -31,4 +31,6 @@ data "aws_caller_identity" "current" {}
 
 locals {
   account_id = data.aws_caller_identity.current.account_id
+  # Created by infra/bootstrap; the CI role may only create principals carrying it.
+  permissions_boundary_arn = "arn:aws:iam::${local.account_id}:policy/ned-permissions-boundary"
 }

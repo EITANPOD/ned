@@ -1,5 +1,6 @@
 resource "aws_iam_user" "runtime" {
-  name = "ned-runtime"
+  name                 = "ned-runtime"
+  permissions_boundary = local.permissions_boundary_arn
 }
 
 # jsonencode (not aws_iam_policy_document) so mock_provider tests can assert on content.

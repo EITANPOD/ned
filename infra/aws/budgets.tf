@@ -1,5 +1,4 @@
-# trivy:ignore:AVD-AWS-0095 budget alerts carry no sensitive data; a CMK for SNS costs $1/mo and needs a key policy for budgets.amazonaws.com
-#trivy:ignore:AVD-AWS-0095
+#trivy:ignore:AVD-AWS-0095 Budget alerts carry no sensitive data; budgets.amazonaws.com cannot publish to a topic encrypted with the AWS-managed aws/sns key, and a CMK costs ~$1/month.
 resource "aws_sns_topic" "budget_alerts" {
   name = "ned-budget-alerts"
 }

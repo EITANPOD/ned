@@ -18,6 +18,13 @@ mock_provider "aws" {
       arn = "arn:aws:sns:us-east-1:123456789012:mock-topic"
     }
   }
+
+  # permissions_boundary is ARN-validated, so the account id must look real.
+  mock_data "aws_caller_identity" {
+    defaults = {
+      account_id = "123456789012"
+    }
+  }
 }
 
 variables {

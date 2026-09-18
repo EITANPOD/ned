@@ -18,6 +18,13 @@ mock_provider "aws" {
       arn = "arn:aws:sns:us-east-1:123456789012:mock-topic"
     }
   }
+
+  # permissions_boundary is ARN-validated, so the account id must look real.
+  mock_data "aws_caller_identity" {
+    defaults = {
+      account_id = "123456789012"
+    }
+  }
 }
 
 variables {
@@ -37,8 +44,8 @@ run "runtime_policy_scoped_to_bedrock_invoke" {
     error_message = "default allowed models must include nova-micro"
   }
   assert {
-    condition     = !strcontains(aws_iam_policy.runtime_bedrock.policy, "\"Resource\":\"*\"") || strcontains(aws_iam_policy.runtime_bedrock.policy, "bedrock:ListFoundationModels")
-    error_message = "Resource:* only allowed for the ListFoundationModels statement"
+    condition     = length([for s in jsondecode(aws_iam_policy.runtime_bedrock.policy).Statement : s if s.Resource == "*"]) == 1 && [for s in jsondecode(aws_iam_policy.runtime_bedrock.policy).Statement : s.Sid if s.Resource == "*"][0] == "DiscoverModels"
+    error_message = "exactly one statement may use Resource:* and it must be DiscoverModels"
   }
 }
 
@@ -52,5 +59,9 @@ run "runtime_user_named_and_secret_in_ssm" {
   assert {
     condition     = aws_ssm_parameter.runtime_secret.type == "SecureString" && aws_ssm_parameter.runtime_secret.name == "/ned/runtime/aws_secret_access_key"
     error_message = "secret key must be a SecureString at /ned/runtime/aws_secret_access_key"
+  }
+  assert {
+    condition     = endswith(aws_iam_user.runtime.permissions_boundary, ":policy/ned-permissions-boundary")
+    error_message = "runtime user must carry the ned-permissions-boundary"
   }
 }
