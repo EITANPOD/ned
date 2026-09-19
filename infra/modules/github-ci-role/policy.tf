@@ -53,12 +53,12 @@ locals {
       resources = ["${local.iam_arn}:role/ned-*"]
       condition = [{ test = "StringEquals", variable = "iam:PassedToService", values = ["bedrock.amazonaws.com"] }]
     }
-    # The CI role must never be able to change itself or strip the boundary.
-    # Deterministic ARN, not module.role.arn: the role's own policy cannot reference the role (cycle).
+    # The CI roles must never be changeable by CI: otherwise apply could rewrite itself, or widen the
+    # unbounded read/plan roles that PRs and main assume. Deterministic ARNs, not module outputs (cycle).
     DenySelfModifyAndBoundaryRemoval = {
       effect    = "Deny"
       actions   = ["iam:*"]
-      resources = ["${local.iam_arn}:role/${var.name}"]
+      resources = [for n in [var.name, var.plan_role_name, var.read_role_name] : "${local.iam_arn}:role/${n}"]
     }
     DenyBoundaryRemoval = {
       effect    = "Deny"
@@ -122,8 +122,8 @@ locals {
     }
   }
 
-  # Plan role: runs PR-authored Terraform, so it only reads (refresh) plus the two S3 writes plan needs.
-  plan_statements = {
+  # Read role (PRs): refresh reads only, no S3 writes of any kind (PR plans run -lock=false, never stash).
+  read_statements = {
     StateBucketList = {
       actions   = ["s3:ListBucket"]
       resources = [local.state_arn]
@@ -131,15 +131,6 @@ locals {
     StateRead = {
       actions   = ["s3:GetObject"]
       resources = ["${local.state_arn}/aws/*"]
-    }
-    # Dispatch plans on main run with -lock=true (S3 lockfile); PR plans use -lock=false.
-    StateLock = {
-      actions   = ["s3:PutObject", "s3:DeleteObject"]
-      resources = ["${local.state_arn}/aws/*.tflock"]
-    }
-    PlanStash = {
-      actions   = ["s3:PutObject"]
-      resources = ["${local.state_arn}/plans/*"]
     }
     NedIamRead = {
       actions = ["iam:Get*", "iam:List*"]
@@ -149,8 +140,8 @@ locals {
         "${local.iam_arn}:role/ned-*",
       ]
     }
-    LogsRead = {
-      actions   = ["logs:Describe*"]
+    LogsDescribe = {
+      actions   = ["logs:DescribeLogGroups"]
       resources = ["*"]
     }
     NedLogGroupTags = {
@@ -162,7 +153,7 @@ locals {
       resources = ["arn:aws:sns:${var.aws_region}:${var.account_id}:ned-*"]
     }
     NedSsmRead = {
-      actions   = ["ssm:GetParameter*", "ssm:ListTagsForResource"]
+      actions   = ["ssm:GetParameter", "ssm:GetParameters", "ssm:ListTagsForResource"]
       resources = ["arn:aws:ssm:${var.aws_region}:${var.account_id}:parameter/ned/*"]
     }
     SsmDescribe = {
@@ -178,4 +169,16 @@ locals {
       resources = ["*"]
     }
   }
+
+  # Plan role (main only): the same reads plus the state lock and the plans/ stash for dispatch applies.
+  plan_statements = merge(local.read_statements, {
+    StateLock = {
+      actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+      resources = ["${local.state_arn}/aws/*.tflock"]
+    }
+    PlanStash = {
+      actions   = ["s3:PutObject"]
+      resources = ["${local.state_arn}/plans/*"]
+    }
+  })
 }

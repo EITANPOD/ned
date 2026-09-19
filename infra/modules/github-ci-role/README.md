@@ -1,15 +1,29 @@
 # github-ci-role
 
-GitHub Actions -> AWS access for Ned's Terraform CI: the GitHub OIDC provider, two CI roles, and the
+GitHub Actions -> AWS access for Ned's Terraform CI: the GitHub OIDC provider, three CI roles, and the
 two permissions boundaries every CI-created principal must carry.
 
-| Role | Trusted OIDC `sub` | Can do |
-|------|--------------------|--------|
-| `ned-github-terraform` (apply) | `repo:<owner>@<owner_id>/<repo>@<repo_id>:environment:prod` | Least-privilege writes on `ned-*` resources (carried over from `infra/bootstrap/ci_role_policy.tf`, every Sid kept) |
-| `ned-github-terraform-plan` (plan) | `...:pull_request`, `...:ref:refs/heads/main` | Read-only on `ned-*` resources; reads state `aws/*`; writes only `plans/*` and the state lockfile `aws/*.tflock` |
+## Role matrix
 
-PR-authored Terraform therefore never runs with write credentials. The numeric owner/repo ids in the
-subject mean a renamed or re-created repo cannot re-acquire either role.
+| Role | Assumed by (OIDC `sub`) | When | Permissions |
+|------|-------------------------|------|-------------|
+| `ned-github-terraform-read` | `repo:<subject>:pull_request` | PR plan (`-lock=false`, no stash) | Refresh reads on `ned-*` resources; `s3:ListBucket` + `s3:GetObject` on state `aws/*`. No S3 writes of any kind. |
+| `ned-github-terraform-plan` | `repo:<subject>:ref:refs/heads/main` | Plan on main / dispatch plan (`-lock=true`) | Read set above + state lock rw on `aws/*.tflock` + `s3:PutObject` on `plans/*` (stash for apply). |
+| `ned-github-terraform` (apply) | `repo:<subject>:environment:prod` | Dispatch apply after manual `prod` approval | Least-privilege writes on `ned-*` resources, carried over from `infra/bootstrap/ci_role_policy.tf` (every Sid kept). Denied `iam:*` on all three CI roles. |
+
+`<subject>` = `<owner>@<owner_id>/<repo>@<repo_id>`: the numeric ids mean a renamed or re-created repo
+cannot re-acquire any role.
+
+### Why three roles
+
+- **PR code never gets write credentials.** PR-authored Terraform (providers, external data sources)
+  runs under the read role, so it cannot overwrite a `plans/<run>.tfplan` waiting for approval (which
+  the apply role would then apply) and cannot create or delete the state lock.
+- **Only main can stash a plan or take the lock**, and main is reviewed code.
+- **The apply role cannot widen the other two.** Its `NedIamManage` grants cover `role/ned-*`, which
+  includes the (unbounded) read and plan roles, so `DenySelfModifyAndBoundaryRemoval` denies `iam:*` on
+  all three role ARNs.
+- Defense in depth: the workflow verifies the stashed plan's sha256 before apply (Phase 0c Task 6).
 
 ## Official modules used
 
@@ -37,7 +51,8 @@ would only lengthen the address.
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
 | name | Apply role name (also its inline policy name) | `string` | `"ned-github-terraform"` | no |
-| plan_role_name | Plan role name (also its inline policy name) | `string` | `"ned-github-terraform-plan"` | no |
+| plan_role_name | Main-branch plan role name (also its inline policy name) | `string` | `"ned-github-terraform-plan"` | no |
+| read_role_name | PR read-only role name (also its inline policy name) | `string` | `"ned-github-terraform-read"` | no |
 | github_repo | Repo as `owner/name` | `string` | n/a | yes |
 | github_owner_id | Numeric GitHub owner id (`> 0`) | `number` | n/a | yes |
 | github_repo_id | Numeric GitHub repo id (`> 0`) | `number` | n/a | yes |
@@ -51,7 +66,8 @@ would only lengthen the address.
 | Name | Description |
 |------|-------------|
 | role_arn | Apply role ARN (`AWS_TF_ROLE_ARN`) |
-| plan_role_arn | Plan role ARN |
+| plan_role_arn | Main-branch plan role ARN |
+| read_role_arn | PR read-only role ARN |
 | oidc_provider_arn | GitHub OIDC provider ARN |
 | user_boundary_arn | Boundary for every CI-created IAM user |
 | role_boundary_arn | Boundary for every CI-created IAM role |
@@ -71,12 +87,14 @@ would only lengthen the address.
   `ned-github-terraform`, so the move is in place (name is ForceNew; no replace).
 - Expected in-place changes after the moves: the apply-role trust `sub` narrows from `...:*` to
   `...:environment:prod` (intended); `force_detach_policies` becomes `true` (the module hard-codes it);
-  the OIDC provider gains an explicit `thumbprint_list` from the module's `tls_certificate` lookup; tags.
-  The plan role is new (1 to add).
+  the OIDC provider gains an explicit `thumbprint_list`; tags. The plan and read roles are new.
+- OIDC thumbprints: the module reads `thumbprint_list` from the live TLS chain (`data.tls_certificate`),
+  so a GitHub certificate rotation shows a harmless in-place diff. AWS ignores thumbprints for
+  `token.actions.githubusercontent.com` (it validates against its own trusted CA library).
 
 ## Tests
 
 `terraform test` (mock providers, no AWS). Child-module resources are not addressable from a test, and
 under `mock_provider` the official module's `aws_iam_policy_document` renders synthetic JSON, so the
-tests assert on the statement maps the module is fed (`local.ci_statements`, `local.plan_statements`,
-`local.trust`) plus the module outputs; the module renders each map entry 1:1 into a statement.
+tests assert on the statement maps the module is fed (`local.ci_statements`, `local.read_statements`,
+`local.plan_statements`, `local.trust`) plus the module outputs; the module renders each map entry 1:1 into a statement.

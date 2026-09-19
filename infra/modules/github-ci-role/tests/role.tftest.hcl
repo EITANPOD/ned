@@ -27,7 +27,7 @@ run "names_are_exact" {
     error_message = "boundary policies must be ned-user-boundary / ned-role-boundary"
   }
   assert {
-    condition     = module.role.name == "ned-github-terraform" && module.plan_role.name == "ned-github-terraform-plan"
+    condition     = module.role.name == "ned-github-terraform" && module.plan_role.name == "ned-github-terraform-plan" && module.read_role.name == "ned-github-terraform-read"
     error_message = "role names must be exact (use_name_prefix = false)"
   }
 }
@@ -45,8 +45,25 @@ run "apply_policy_keeps_every_bootstrap_sid" {
     error_message = "apply policy must carry exactly the bootstrap statements"
   }
   assert {
-    condition     = local.ci_statements.DenySelfModifyAndBoundaryRemoval.effect == "Deny" && local.ci_statements.DenySelfModifyAndBoundaryRemoval.resources == ["arn:aws:iam::123456789012:role/ned-github-terraform"]
-    error_message = "apply role must deny iam:* on itself"
+    condition = local.ci_statements.DenySelfModifyAndBoundaryRemoval.effect == "Deny" && local.ci_statements.DenySelfModifyAndBoundaryRemoval.resources == [
+      "arn:aws:iam::123456789012:role/ned-github-terraform",
+      "arn:aws:iam::123456789012:role/ned-github-terraform-plan",
+      "arn:aws:iam::123456789012:role/ned-github-terraform-read",
+    ]
+    error_message = "apply role must deny iam:* on all three CI roles"
+  }
+  assert {
+    condition = local.ci_statements.NedIamManage.actions == [
+      "iam:DeleteUser", "iam:GetUser", "iam:TagUser", "iam:UntagUser", "iam:ListGroupsForUser",
+      "iam:CreateAccessKey", "iam:DeleteAccessKey", "iam:ListAccessKeys", "iam:UpdateAccessKey",
+      "iam:CreatePolicy", "iam:DeletePolicy", "iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyVersions",
+      "iam:CreatePolicyVersion", "iam:DeletePolicyVersion", "iam:TagPolicy", "iam:UntagPolicy",
+      "iam:ListAttachedUserPolicies", "iam:ListUserPolicies",
+      "iam:DeleteRole", "iam:GetRole", "iam:UpdateRole", "iam:TagRole", "iam:UntagRole",
+      "iam:UpdateAssumeRolePolicy", "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:GetRolePolicy",
+      "iam:ListRolePolicies", "iam:ListAttachedRolePolicies", "iam:ListInstanceProfilesForRole",
+    ]
+    error_message = "NedIamManage must match infra/bootstrap exactly"
   }
   assert {
     condition     = local.ci_statements.DenyBoundaryPolicyEdits.effect == "Deny" && contains(local.ci_statements.DenyBoundaryPolicyEdits.actions, "iam:CreatePolicyVersion")
@@ -83,7 +100,7 @@ run "no_wildcard_actions" {
   command = apply
 
   assert {
-    condition     = alltrue([for s in concat(values(local.ci_statements), values(local.plan_statements)) : !contains(s.actions, "*")])
+    condition     = alltrue([for s in concat(values(local.ci_statements), values(local.plan_statements), values(local.read_statements)) : !contains(s.actions, "*")])
     error_message = "no statement may grant Action:*"
   }
 }
@@ -96,8 +113,12 @@ run "trust_is_exact" {
     error_message = "apply role must trust only the prod environment of this repo"
   }
   assert {
-    condition     = local.trust.plan.GithubOidc.condition[1].values == ["repo:EITANPOD@164246517/ned@1376066666:pull_request", "repo:EITANPOD@164246517/ned@1376066666:ref:refs/heads/main"]
-    error_message = "plan role must trust only PRs and main of this repo"
+    condition     = local.trust.plan.GithubOidc.condition[1].values == ["repo:EITANPOD@164246517/ned@1376066666:ref:refs/heads/main"]
+    error_message = "plan role must trust only main of this repo"
+  }
+  assert {
+    condition     = local.trust.read.GithubOidc.condition[1].values == ["repo:EITANPOD@164246517/ned@1376066666:pull_request"]
+    error_message = "read role must trust only PRs of this repo"
   }
   assert {
     condition = alltrue([for t in values(local.trust) : (
@@ -112,7 +133,26 @@ run "trust_is_exact" {
   }
 }
 
-run "plan_role_is_read_only" {
+run "read_role_is_read_only" {
+  command = apply
+
+  assert {
+    condition = sort(keys(local.read_statements)) == sort([
+      "StateBucketList", "StateRead", "NedIamRead", "LogsDescribe", "NedLogGroupTags", "NedSnsRead",
+      "NedSsmRead", "SsmDescribe", "BudgetsRead", "BedrockLoggingRead",
+    ])
+    error_message = "read role statement set drifted"
+  }
+  assert {
+    condition = length([
+      for a in flatten([for s in values(local.read_statements) : s.actions]) : a
+      if length(regexall("^[a-z0-9]+:(Create|Put|Delete|Attach|Detach|Update|Set|Modify|Tag|Untag|Pass|Add|Remove|\\*)", a)) > 0
+    ]) == 0
+    error_message = "read role must have no write actions (incl. s3:Put*/s3:Delete*)"
+  }
+}
+
+run "plan_role_writes_only_lock_and_stash" {
   command = apply
 
   assert {
@@ -125,6 +165,10 @@ run "plan_role_is_read_only" {
   assert {
     condition     = local.plan_statements.PlanStash.resources == ["arn:aws:s3:::ned-tfstate-test/plans/*"] && local.plan_statements.StateLock.resources == ["arn:aws:s3:::ned-tfstate-test/aws/*.tflock"]
     error_message = "plan role S3 writes must be limited to plans/* and the state lockfile"
+  }
+  assert {
+    condition     = sort(keys(local.plan_statements)) == sort(concat(keys(local.read_statements), ["PlanStash", "StateLock"]))
+    error_message = "plan role must be the read set plus the lock and stash statements"
   }
 }
 

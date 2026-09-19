@@ -5,9 +5,15 @@ variable "name" {
 }
 
 variable "plan_role_name" {
-  description = "Name of the read-only plan role and of its inline policy (exact, no prefix)."
+  description = "Name of the main-branch plan role and of its inline policy (exact, no prefix)."
   type        = string
   default     = "ned-github-terraform-plan"
+}
+
+variable "read_role_name" {
+  description = "Name of the PR (read-only) role and of its inline policy (exact, no prefix)."
+  type        = string
+  default     = "ned-github-terraform-read"
 }
 
 variable "github_repo" {

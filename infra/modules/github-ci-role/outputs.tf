@@ -4,8 +4,13 @@ output "role_arn" {
 }
 
 output "plan_role_arn" {
-  description = "Read-only plan role ARN for PR and main-branch plans."
+  description = "Plan role ARN for main-branch plans (lock + plans/ stash)."
   value       = module.plan_role.arn
+}
+
+output "read_role_arn" {
+  description = "Read-only role ARN for pull-request plans."
+  value       = module.read_role.arn
 }
 
 output "oidc_provider_arn" {
