@@ -29,7 +29,7 @@ CodeRabbit only auto-reviews repos with 10+ stars; below that, comment `@coderab
 
 ### Guardrails (guard check)
 
-Every PR gets a risk tier from `.github/scripts/guard-tier.sh` (paths, terraform plan destroys, Dependabot semver, force-push, a Claude `HUMAN REVIEW REQUIRED` verdict). `guard` runs on `pull_request_target`: it always executes `main`'s copy of the workflow and scripts, and only reads the PR head as git objects, so a PR cannot change the gate that judges it.
+Every PR gets a risk tier from `.github/scripts/guard-tier.sh` (paths, terraform plan destroys, `infra/` changes whose plan is `No changes` count as low, Dependabot semver, force-push, a Claude `HUMAN REVIEW REQUIRED` verdict). `guard` runs on `pull_request_target`: it always executes `main`'s copy of the workflow and scripts, and only reads the PR head as git objects, so a PR cannot change the gate that judges it.
 
 | Tier | Merge | You get |
 |---|---|---|

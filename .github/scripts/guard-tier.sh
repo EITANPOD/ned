@@ -9,6 +9,7 @@ bump() { # bump <level> <reason>
 }
 
 touches_infra=false
+infra_paths=() # medium-rule infra paths; downgraded to low when the plan is a no-op
 while IFS=$'\t' read -r status path newpath || [ -n "${status:-}" ]; do
   status=${status%$'\r'}; path=${path%$'\r'}; newpath=${newpath%$'\r'}
   [ -z "${path:-}" ] && continue
@@ -25,7 +26,7 @@ while IFS=$'\t' read -r status path newpath || [ -n "${status:-}" ]; do
     # evidence producers: the plan text and the Claude verdict the guard trusts
     .github/workflows/infra-aws.yml|.github/workflows/claude-review.yml) bump high "guard evidence workflow changed ($path)";;
     .claude/*|CLAUDE.md|.coderabbit.yaml|.github/CODEOWNERS) bump high "agent/reviewer rules changed ($path)";;
-    infra/*) touches_infra=true; bump medium "infra changed ($path)";;
+    infra/*) touches_infra=true; infra_paths+=("$path");;
     .github/workflows/*) bump medium "workflow changed ($path)";;
     deploy/*) bump medium "deploy changed ($path)";;
     apps/*|docs/*|tests/*|README.md|.github/dependabot.yml) ;;   # low
@@ -41,8 +42,11 @@ if [ "$touches_infra" = true ]; then
     destroys=$(sed -E -n 's/^Plan: .* ([0-9]+) to destroy(, [0-9]+ to forget)?\.$/\1/p' "$PLAN_FILE" | tail -1)
     destroys=${destroys:-0}
     if [ "$destroys" -gt 0 ]; then bump high "plan destroys ${destroys} resource(s)"; fi
+    # A no-op plan (docs, descriptions, refactors) needs no human; any "Plan:" line means a real change.
+    if grep -q '^No changes\.' "$PLAN_FILE" && ! grep -q '^Plan: ' "$PLAN_FILE"; then infra_paths=(); fi
   fi
 fi
+for p in "${infra_paths[@]}"; do bump medium "infra changed ($p)"; done
 
 if [ "${PR_ACTOR:-}" = "dependabot[bot]" ]; then
   version_pattern="from ([0-9]+)\.[^ ]* to ([0-9]+)\."
