@@ -17,16 +17,18 @@ def handle(event, cfg, dispatch, answer):
     if not hmac.compare_digest(got.encode(), cfg["webhook_secret"].encode()):
         return 401
     body = event.get("body") or "{}"
-    if event.get("isBase64Encoded"):
-        body = base64.b64decode(body).decode()
     try:
+        if event.get("isBase64Encoded"):
+            body = base64.b64decode(body).decode()
         query = json.loads(body).get("callback_query")
         if not query:
             return 200
         cid = query["id"]
-    except (json.JSONDecodeError, KeyError, TypeError):
+    # ValueError covers json.JSONDecodeError, binascii.Error (bad base64) and UnicodeDecodeError;
+    # AttributeError covers a non-dict body (e.g. a JSON array) or "from": null.
+    except (ValueError, AttributeError, KeyError, TypeError):
         return 200
-    if str(query.get("from", {}).get("id")) != cfg["approver_id"]:
+    if str((query.get("from") or {}).get("id")) != cfg["approver_id"]:
         answer(cid, "not authorised")
         return 200
     m = CALLBACK.match(query.get("data") or "")
@@ -43,7 +45,10 @@ def handle(event, cfg, dispatch, answer):
 
 def _post(url, payload, headers):
     req = urllib.request.Request(url, json.dumps(payload).encode(), {"Content-Type": "application/json", **headers})
-    with urllib.request.urlopen(req, timeout=10) as resp:
+    # 5s, not 10s: dispatch() + answer() each call this, plus a cold-start SSM fetch, all under the
+    # Lambda's 15s timeout. At 10s two slow calls alone could exceed it, and Telegram redelivers on
+    # timeout -> duplicate dispatch.
+    with urllib.request.urlopen(req, timeout=5) as resp:
         return resp.status
 
 
