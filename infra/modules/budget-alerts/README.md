@@ -11,11 +11,10 @@ module sets `create_subscription = false` on the topic.
 
 `topic_policy_statements` adds a statement allowing `budgets.amazonaws.com`
 to `sns:Publish`, scoped with an `aws:SourceAccount` condition to
-`var.account_id`. `enable_default_topic_policy` is left at its module
-default (`true`), so the generated policy also carries the module's own
-account-owner statement alongside the budgets statement — migrating from the
-hand-written policy in `infra/aws/budgets.tf` is therefore an in-place
-policy update (extra statement), not a replacement.
+`var.account_id`. Default owner statement disabled
+(`enable_default_topic_policy = false`) — the topic policy contains only
+`AllowBudgetsPublish` (matches the live policy; migration shows at most a
+Sid/Resource cosmetic in-place update).
 
 ## Trivy
 

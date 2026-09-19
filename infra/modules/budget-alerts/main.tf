@@ -5,6 +5,10 @@ module "topic" {
   name            = var.topic_name
   use_name_prefix = false
 
+  # Skip the module's default owner statement (Principal AWS "*" + management
+  # actions) — least privilege: only budgets.amazonaws.com may publish.
+  enable_default_topic_policy = false
+
   topic_policy_statements = {
     budgets_publish = {
       sid     = "AllowBudgetsPublish"
