@@ -23,17 +23,36 @@ cannot re-acquire any role.
 - **The apply role cannot widen the other two.** Its `NedIamManage` grants cover `role/ned-*`, which
   includes the (unbounded) read and plan roles, so `DenySelfModifyAndBoundaryRemoval` denies `iam:*` on
   all three role ARNs.
-- Defense in depth: the workflow verifies the stashed plan's sha256 before apply (Phase 0c Task 6).
+- Defense in depth: the workflow verifies the stashed plan's sha256 before apply.
+
+### Assumptions this relies on
+
+- **Environment `prod` is restricted to `main`.** The apply role trusts `environment:prod`, which says
+  nothing about the ref: any workflow run that enters `prod` gets it. The environment's deployment branch
+  policy is `protected_branches: true`, and `main` is the only protected branch (setup snippet in the root
+  README). Loosening either turns every branch that can enter `prod` into an apply path.
+- **No workflow that runs on `main` requests `id-token: write` except `infra-aws.yml`.** Any workflow
+  triggered by `push`, `pull_request_target`, `workflow_run` or `schedule` runs with ref `refs/heads/main`,
+  so an OIDC token it mints matches the plan role's trust (`ref:refs/heads/main`). `guard.yml` runs
+  `main`'s code with PR data and must never get it. A workflow gaining `id-token: write` is a STOP
+  condition for reviewers (`CLAUDE.md`, `.coderabbit.yaml`).
+
+### Known credential exposure (accepted, tracked)
+
+Any same-repo PR can assume the read role, and the read role can read the Terraform state (which holds
+the runtime IAM user's access key secret) and the `/ned/*` SSM parameters. A malicious same-repo PR could
+therefore exfiltrate the runtime key. Blast radius: Bedrock invoke on the allowed models only (the
+runtime user's policy and boundary), capped by the $10 monthly budget alert. Planned fix (deploy phase):
+mint the runtime credential outside Terraform, or use workload identity for the VM, so no long-lived
+secret is in state.
 
 ## Official modules used
 
 - `terraform-aws-modules/iam/aws//modules/iam-oidc-provider` `6.8.2` — the OIDC provider.
-- `terraform-aws-modules/iam/aws//modules/iam-role` `6.8.2` — both roles and their inline policies.
+- `terraform-aws-modules/iam/aws//modules/iam-role` `6.8.2` — the three CI roles and their inline policies.
 
-Trust is set with the iam-role input `trust_policy_permissions` (from the module's `variables.tf`:
-`type = map(object({ sid, actions, not_actions, effect = optional(string, "Allow"), resources,
-not_resources, principals = optional(list(object({ type, identifiers }))), not_principals,
-condition = optional(list(object({ test, variable, values }))) }))`), with an explicit
+Trust is set with the iam-role input `trust_policy_permissions` (a map of statement objects; see
+[`variables.tf` at v6.8.2](https://github.com/terraform-aws-modules/terraform-aws-iam/blob/v6.8.2/modules/iam-role/variables.tf)), with an explicit
 `StringEquals` on `token.actions.githubusercontent.com:aud` and `StringLike` on `...:sub`.
 The module's `enable_github_oidc` is deliberately not used: it writes `ForAllValues:StringEquals` on
 `aud`, which evaluates true when the key is absent.

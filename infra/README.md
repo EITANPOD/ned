@@ -46,10 +46,18 @@ Created by `modules/github-ci-role` (details and rationale in its README).
 | `plan` | `workflow_dispatch` on `main` | `ned-github-terraform-plan` (`AWS_TF_PLAN_ROLE_ARN`) | read state, lock, write `plans/<run_id>.tfplan` |
 | `apply` | dispatch `action=apply`, env `prod` approval | `ned-github-terraform` (`AWS_TF_ROLE_ARN`) | state rw, read the stash |
 
-The dispatch plan job exports the tfplan's sha256 as a job output; `apply` fails unless the fetched
-stash matches it. `check` (fmt, validate, tflint, trivy) and `module-tests (<module>)` (`terraform test`
+A dispatch plan stashes the tfplan only for `action=apply` with changes, and exports its sha256 as a job
+output; `apply` fails unless the fetched stash matches it. `check` (fmt, validate, tflint, trivy) and `module-tests (<module>)` (`terraform test`
 per module) run on every PR; `module-tests` is not yet a required check (add it to branch protection
 once it has run on `main`).
+
+## Prerequisites
+
+- Environment `prod`: required reviewer + deployment branch policy `protected_branches: true`, with `main`
+  the only protected branch. The apply role trusts `environment:prod` regardless of ref, so this policy is
+  what keeps applies on `main` (snippet in the root README runbook).
+- Repo variables `AWS_TF_READ_ROLE_ARN`, `AWS_TF_PLAN_ROLE_ARN`, `AWS_TF_ROLE_ARN`, `TF_STATE_BUCKET`,
+  `AWS_REGION`, `BUDGET_EMAIL`. A missing role variable fails the plan job with an explicit error.
 
 ## Migration from the flat roots (Phase 0c)
 
@@ -58,7 +66,10 @@ mapped by `moved.tf` (tables in each env README). Rollout order:
 
 1. Merge any open infra PR.
 2. Maintainer applies `envs/bootstrap` locally: creates the plan and read roles, narrows the apply-role
-   trust to `environment:prod` (this breaks the old PR-plan path, hence step 1).
+   trust to `environment:prod` (this breaks the old PR-plan path, hence step 1). From here until step 5,
+   `main`'s old dispatch plan/apply cannot run either (its plan job assumes the apply role outside `prod`).
+   Never run Terraform in the old `infra/bootstrap` config again: the bootstrap state now has module
+   addresses, and the old config would plan to destroy and recreate everything.
 3. Set repo variables `AWS_TF_PLAN_ROLE_ARN` and `AWS_TF_READ_ROLE_ARN` from the bootstrap outputs.
 4. CI on the Phase 0c PR plans `envs/prod` with the read role: expect 0 to add, 1 to change (SNS topic
    policy `Sid`), 0 to destroy.

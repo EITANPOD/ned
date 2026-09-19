@@ -6,7 +6,7 @@ Ned is a proactive personal chief-of-staff agent. Design: `docs/superpowers/spec
 - Conventional commits (`feat|fix|refactor|docs|test|chore|perf|ci: …`). No attribution trailers.
 - Terraform is applied from GitHub Actions (`infra-aws.yml` on `infra/envs/prod`, gated by environment `prod`). Sole exception: `infra/envs/bootstrap` is applied locally by the maintainer (chicken-and-egg for the OIDC roles).
 - Three CI roles: `ned-github-terraform-read` (PR plans, no writes, `-lock=false`), `ned-github-terraform-plan` (dispatch plans on `main`: lock + stash), `ned-github-terraform` (apply, env `prod`; verifies the stashed plan's sha256).
-- Terraform tests use `mock_provider "aws" {}` + `command = apply`; IAM policies are `jsonencode()` locals so tests can assert on them.
+- Terraform tests use `mock_provider "aws" {}` + `command = apply`; IAM policy statements are locals (`jsonencode()`, or statement maps fed to official modules) so tests can assert on them.
 - All AWS resources are named `ned-*`. IAM is least-privilege and resource-scoped; `Resource: "*"` only for list/describe APIs.
 - GitHub Actions pinned to a full commit SHA with a `# vX.Y.Z` comment (Dependabot keeps them current); each job declares the minimum `permissions`.
 - Secrets never in git. Runtime secrets live in SSM under `/ned/`.
@@ -25,6 +25,7 @@ Any of these in a PR means the verdict is `VERDICT: HUMAN REVIEW REQUIRED`, foll
 - wildcard (`*`) actions or resources added to any policy
 - secrets, tokens, or credentials appear in the diff
 - workflow `permissions` widen, an action loses its version pin, or a required check is removed
+- a workflow gains `id-token: write` (any workflow running on `main` would get the plan role)
 - tests are deleted or weakened; a check is disabled
 - terraform plan destroys anything
 - changes to `.github/workflows/guard.yml`, `.github/workflows/infra-aws.yml`, `.github/workflows/claude-review.yml`, `.github/actions/**`, `.github/scripts/**`, `.claude/**`, `CLAUDE.md`, `.coderabbit.yaml`

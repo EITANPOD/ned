@@ -43,6 +43,8 @@ Reviewer verdicts are machine-read and bound to the current head: Claude (`claud
 
 Known limitation, agent identity: agent sessions currently use the maintainer's GitHub login (an admin), so the label check cannot tell an agent from the maintainer. Mitigations in place: the `.claude` hook and deny-list block label edits, merges and pushes to `main` from agent sessions, and branch protection runs with `enforce_admins`. A dedicated GitHub App identity is planned for when agents run unattended.
 
+Known limitation, runtime credential exposure: any same-repo PR can assume the read-only CI role, which can read the Terraform state (it holds the runtime access key secret) and the `/ned/*` SSM parameters. Blast radius: Bedrock invoke on the allowed models, capped by the $10 monthly budget. Planned fix in the deploy phase: mint the runtime credential outside Terraform (or workload identity), so state holds no long-lived secret. Details in `infra/modules/github-ci-role/README.md`.
+
 Known limitation: auto-merged PRs do not trigger `push` workflows on `main` (GitHub does not fan out events from `GITHUB_TOKEN`). The PR's own checks are the verification; `main-red` covers manual dispatches. A GitHub App token can lift this later.
 
 One-time setup: secrets `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (create the bot with @BotFather, `/start` it, read your chat id from `getUpdates`); enable auto-merge on the repo; add `guard` to the required checks. `app_id` 15368 is GitHub Actions, so only Actions runs can satisfy `lint`/`check`/`guard` (a commit status with the same name from anyone else does not count); `enforce_admins` makes the gate apply to admins too:
@@ -62,8 +64,15 @@ The commands live in [infra/envs/bootstrap/README.md](infra/envs/bootstrap/READM
 1. Repo variables: `AWS_ACCOUNT_ID`, `AWS_REGION=us-east-1`, `TF_STATE_BUCKET=ned-tfstate-<account-id>`, `BUDGET_EMAIL=<you>`.
 2. Apply `infra/envs/bootstrap` locally with your admin profile (first time: local state, then migrate it into the bucket). Re-apply it locally whenever it changes.
 3. Set repo variables from its outputs: `AWS_TF_ROLE_ARN` (`ci_role_arn`), `AWS_TF_PLAN_ROLE_ARN` (`plan_role_arn`), `AWS_TF_READ_ROLE_ARN` (`read_role_arn`).
-4. Create environment `prod` with yourself as required reviewer. Branch protection on `main`: require PR + `lint` and `check` status checks (`module-tests (<module>)` can be added once it has run on `main`).
+4. Create environment `prod` with yourself as required reviewer, deployable from protected branches only (`main` is the only protected branch; the apply role's guarantee depends on it):
+
+   ```bash
+   echo '{"reviewers":[{"type":"User","id":<your-user-id>}],"deployment_branch_policy":{"protected_branches":true,"custom_branch_policies":false}}' \
+     | gh api -X PUT repos/<owner>/<repo>/environments/prod --input -
+   ```
+
+   Branch protection on `main`: require PR + `lint` and `check` status checks (`module-tests (<module>)` can be added once it has run on `main`).
 5. Open a PR touching `infra/` → plan of `infra/envs/prod` (read role) appears as a PR comment. Merge.
 6. Actions → `infra-aws` → Run workflow on `main` with `action=apply` → approve the `prod` deployment → resources created. If it fails on the Bedrock logging configuration with an IAM validation error, re-run the apply once (IAM propagation).
 
-Runtime credentials for Ned are in SSM: `/ned/runtime/aws_access_key_id`, `/ned/runtime/aws_secret_access_key` (SecureString). They are reserved for the Phase 8 deploy job; nothing reads them yet.
+Runtime credentials for Ned are in SSM: `/ned/runtime/aws_access_key_id`, `/ned/runtime/aws_secret_access_key` (SecureString). They are reserved for the Phase 8 deploy job; no application reads them yet, but the read-only CI role can (see the runtime credential exposure limitation above).

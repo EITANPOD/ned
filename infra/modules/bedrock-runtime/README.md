@@ -18,9 +18,12 @@ The trust policy is one statement: `bedrock.amazonaws.com` assumes the role,
 gated by `aws:SourceAccount` / `aws:SourceArn` conditions. That's a single
 `jsonencode()` block. The `iam-role` module's `trust_policy_permissions`
 shape (map of statements → `data.aws_iam_policy_document` → dynamic blocks)
-was not verified against source for this task and would add indirection
-without shrinking the diff — same reasoning as the boundaries in
-`github-ci-role`.
+would add indirection without shrinking the diff — same reasoning as the
+boundaries in `github-ci-role`.
+
+The log group is a plain `aws_cloudwatch_log_group` for the same reason: the
+official log-group module is a thin wrapper around that one resource and adds
+nothing here.
 
 ## Inputs
 

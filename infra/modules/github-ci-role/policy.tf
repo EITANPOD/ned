@@ -3,14 +3,14 @@ locals {
   iam_arn   = "arn:aws:iam::${var.account_id}"
   state_arn = var.state_bucket_arn
 
-  # Apply role: least privilege for what infra/aws manages, everything scoped to ned-* names.
+  # Apply role: least privilege for what infra/envs/prod manages, everything scoped to ned-* names.
   # Carried over statement-for-statement from infra/bootstrap/ci_role_policy.tf.
   ci_statements = {
     StateBucketList = {
       actions   = ["s3:ListBucket", "s3:GetBucketVersioning"]
       resources = [local.state_arn]
     }
-    # aws/ = the infra/aws state key; plans/ = tfplan handoff between the plan and apply jobs.
+    # aws/ = the infra/envs/prod state key (kept from the old infra/aws root); plans/ = tfplan handoff between the plan and apply jobs.
     StateObjects = {
       actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
       resources = ["${local.state_arn}/aws/*", "${local.state_arn}/plans/*"]
