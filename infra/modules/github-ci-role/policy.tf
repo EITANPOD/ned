@@ -185,6 +185,16 @@ locals {
       actions   = ["lambda:Get*", "lambda:List*"]
       resources = ["arn:aws:lambda:${var.aws_region}:${var.account_id}:function:ned-*"]
     }
+    # Approver secrets (telegram-approver): Terraform never manages them, so refresh never needs them.
+    # Without this a PR plan could print the webhook secret and forge a Telegram approval.
+    DenyApproverSecrets = {
+      effect  = "Deny"
+      actions = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"]
+      resources = [
+        "arn:aws:ssm:${var.aws_region}:${var.account_id}:parameter/ned/telegram/*",
+        "arn:aws:ssm:${var.aws_region}:${var.account_id}:parameter/ned/github/*",
+      ]
+    }
   }
 
   # Plan role (main only): the same reads plus the state lock and the plans/ stash for dispatch applies.

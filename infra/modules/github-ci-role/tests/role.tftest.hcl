@@ -139,7 +139,7 @@ run "read_role_is_read_only" {
   assert {
     condition = sort(keys(local.read_statements)) == sort([
       "StateBucketList", "StateRead", "NedIamRead", "LogsDescribe", "NedLogGroupTags", "NedSnsRead",
-      "NedSsmRead", "SsmDescribe", "BudgetsRead", "BedrockLoggingRead", "NedLambdaRead",
+      "NedSsmRead", "SsmDescribe", "BudgetsRead", "BedrockLoggingRead", "NedLambdaRead", "DenyApproverSecrets",
     ])
     error_message = "read role statement set drifted"
   }
@@ -190,6 +190,26 @@ run "lambda_permissions" {
   assert {
     condition     = strcontains(aws_iam_policy.role_boundary.policy, "parameter/ned/telegram/*") && strcontains(aws_iam_policy.role_boundary.policy, "kms:ViaService")
     error_message = "role boundary must allow the approver's SSM reads (KMS via SSM only)"
+  }
+}
+
+run "read_and_plan_roles_deny_approver_secrets" {
+  command = apply
+
+  assert {
+    condition = local.read_statements.DenyApproverSecrets.effect == "Deny" && local.read_statements.DenyApproverSecrets.resources == [
+      "arn:aws:ssm:us-east-1:123456789012:parameter/ned/telegram/*",
+      "arn:aws:ssm:us-east-1:123456789012:parameter/ned/github/*",
+    ]
+    error_message = "read role must deny reading the approver's SSM secrets"
+  }
+  assert {
+    condition     = contains(keys(local.plan_statements), "DenyApproverSecrets") && local.plan_statements.DenyApproverSecrets.effect == "Deny"
+    error_message = "plan role must inherit the approver-secrets deny from the read statements"
+  }
+  assert {
+    condition     = !contains(keys(local.ci_statements), "DenyApproverSecrets")
+    error_message = "apply role is unchanged (R5): it keeps its existing access to the approver secrets"
   }
 }
 

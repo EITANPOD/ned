@@ -48,6 +48,10 @@ runtime user's policy and boundary), capped by the $10 monthly budget alert. Pla
 mint the runtime credential outside Terraform, or use workload identity for the VM, so no long-lived
 secret is in state.
 
+The approver secrets (`/ned/telegram/*`, `/ned/github/*`) are excluded from this exposure:
+`DenyApproverSecrets` explicitly denies `ssm:GetParameter(s)`/`GetParametersByPath` on those paths to the
+read and plan roles (the apply role is unchanged — main-only, behind the `prod` environment approval).
+
 ## Official modules used
 
 - `terraform-aws-modules/iam/aws//modules/iam-oidc-provider` `6.8.2` — the OIDC provider.
