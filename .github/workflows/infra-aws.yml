@@ -39,11 +39,13 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 2 # the PR merge commit and its parents
-      # Does this PR touch infra/? HEAD^1 is the base tip, so HEAD^1..HEAD is exactly what the PR brings.
+      # Does this PR touch infra/ or the deployed Lambda's source? HEAD^1 is the base tip, so
+      # HEAD^1..HEAD is exactly what the PR brings. apps/telegram-approver/** is packaged by
+      # infra/modules/telegram-approver's archive_file, so its source must plan too.
       - id: changed
         if: github.event_name == 'pull_request'
         run: |
-          if git diff --name-only HEAD^1 HEAD | grep -q '^infra/'; then v=true; else v=false; fi
+          if git diff --name-only HEAD^1 HEAD | grep -qE '^(infra|apps/telegram-approver)/'; then v=true; else v=false; fi
           echo "infra_changed=$v" >> "$GITHUB_OUTPUT"
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
