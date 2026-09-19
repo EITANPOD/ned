@@ -29,16 +29,20 @@ jobs:
       REPO: ${{ github.repository }}
       PR: ${{ github.event.workflow_run.pull_requests[0].number }}
       HEAD: ${{ github.event.workflow_run.head_sha }}
+      BRANCH: ${{ github.event.workflow_run.head_branch }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Re-run the latest guard run for this head
         run: |
+          # The PR moved on: the newer head has its own guard run; re-running would only disturb it.
+          current=$(gh pr view "$PR" -R "$REPO" --json headRefOid -q .headRefOid)
+          [ "$current" = "$HEAD" ] || { echo "PR head is now $current, not $HEAD; nothing to re-run"; exit 0; }
           id=$(bash .github/scripts/guard-head-runs.sh "$HEAD" | jq -r 'max_by(.created_at) | .id // empty')
           [ -n "$id" ] || { echo "no guard run for $HEAD yet; the pull_request_target run will see the result"; exit 0; }
           # A run still in progress cannot be re-run; wait for it (bounded), then re-run so it reads the new evidence.
-          timeout 600 gh run watch "$id" >/dev/null 2>&1 || true
+          timeout 600 gh run watch "$id" --interval 15 >/dev/null 2>&1 || true
           gh run rerun "$id"
 
   guard:
@@ -68,7 +72,8 @@ jobs:
           head=$(jq -r .headRefOid pr.json)
           # HEAD_TIME: when this head arrived on this PR = earliest guard run for it (server-set; includes this run).
           # Nothing found → now, so nothing older can count (fail closed).
-          head_time=$(bash .github/scripts/guard-head-runs.sh "$head" | jq -r 'map(.created_at) | min // empty')
+          head_time=$(BRANCH=$(jq -r .headRefName pr.json) bash .github/scripts/guard-head-runs.sh "$head" \
+            | jq -r 'map(.created_at) | min // empty')
           {
             printf 'head=%s\n' "$head"
             printf 'head_time=%s\n' "${head_time:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
