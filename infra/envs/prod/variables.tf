@@ -34,7 +34,7 @@ variable "budget_limit_usd" {
 }
 
 variable "log_retention_days" {
-  description = "Retention for Bedrock invocation logs."
+  description = "Retention in days for Bedrock invocation logs in CloudWatch (text only; 14 keeps a two-week audit window at minimal cost)."
   type        = number
   default     = 14
 }
