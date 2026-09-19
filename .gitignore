@@ -7,6 +7,7 @@ __pycache__/
 node_modules/
 .next/
 .terraform/
+infra/modules/**/.terraform.lock.hcl
 *.tfstate
 *.tfstate.*
 .tfplan

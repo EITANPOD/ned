@@ -23,13 +23,12 @@ policy update (extra statement), not a replacement.
 publish to a topic encrypted with a customer-managed KMS key, only the
 AWS-managed `aws/sns` key, and the topic carries no sensitive data. The
 `#trivy:ignore:AVD-AWS-0095` comment sits directly above the `module "topic"`
-block in `main.tf`. Verified: `trivy config` on this directory does not
-descend into the downloaded registry module (`.terraform/modules/topic`), so
-it never evaluates the underlying `aws_sns_topic` resource and reports 0
-misconfigurations with or without the comment present (confirmed by
-temporarily removing it and re-running). The comment is kept as the
-justification of record at the call site in case a future trivy version (or
-a `--terraform-plan` scan) starts resolving into registry modules.
+block in `main.tf`. Verified: trivy does parse the downloaded registry module
+(`.terraform/modules/topic`), but its misconfig engine does not raise
+`AVD-AWS-0095` for module-instantiated resources in the installed version
+(confirmed 0 misconfigurations with or without the comment present). The
+comment is documentation of intent at the call site, kept in case a future
+trivy version starts raising this check for module-instantiated resources.
 
 ## Migrating from `infra/aws/budgets.tf`
 

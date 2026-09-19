@@ -29,6 +29,10 @@ module "topic" {
 
 #trivy:ignore:AVD-AWS-0095 Budget alerts carry no sensitive data; budgets.amazonaws.com cannot publish to a topic encrypted with the AWS-managed aws/sns key, and a CMK costs ~$1/month.
 resource "aws_budgets_budget" "monthly" {
+  # topic_arn is derived from aws_sns_topic.this[0] alone; wait for the whole
+  # module (including the topic policy) so budgets can actually publish.
+  depends_on = [module.topic]
+
   name         = var.name
   budget_type  = "COST"
   limit_amount = tostring(var.limit_usd)
