@@ -6,7 +6,7 @@ Design: [docs/superpowers/specs/2026-09-18-ned-design.md](docs/superpowers/specs
 
 ## Status
 
-Phase 0: infra bootstrap + AWS (Terraform via GitHub Actions). See [Infra](#infra).
+Phase 0 (infra bootstrap + AWS runtime via Terraform in GitHub Actions) and Phase 0b (guardrails: risk-tiered `guard` gate, reviewer verdicts, Telegram alerts, agent deny-list) are live. Next: Phase 0c, IaC restructure into `infra/modules` + `infra/envs`. See [Infra](#infra).
 
 ## Infra
 
