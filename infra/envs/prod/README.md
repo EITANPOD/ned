@@ -1,18 +1,22 @@
 # envs/prod
 
 Ned's production AWS root: the Bedrock runtime (IAM user, invoke policy,
-access key in SSM, invocation logging) and the monthly budget with its SNS
-alert topic. Composes `../../modules/bedrock-runtime` and
-`../../modules/budget-alerts`; replaces the flat `infra/aws` root in place.
+access key in SSM, invocation logging), the monthly budget with its SNS
+alert topic, and the Telegram approver Lambda. Composes
+`../../modules/bedrock-runtime`, `../../modules/budget-alerts`, and
+`../../modules/telegram-approver`; replaces the flat `infra/aws` root in place.
 
 ## How CI runs it
 
 `.github/workflows/infra-aws.yml` runs here. PR plans assume the read role
 (`AWS_TF_READ_ROLE_ARN`, `-lock=false`, nothing stashed); a dispatch on `main`
-plans with the plan role (`AWS_TF_PLAN_ROLE_ARN`, locked) and stashes the
-tfplan to `plans/<run_id>.tfplan`; the apply job (`AWS_TF_ROLE_ARN`, behind
-the `prod` environment approval) refuses the stash unless its sha256 matches
-the plan job's output. Init is partial:
+plans with the plan role (`AWS_TF_PLAN_ROLE_ARN`, locked) and stashes a
+tarball of the `tfplan` and the plan-time `.build/` (the Telegram approver's
+Lambda zip, from `data.archive_file` — a saved plan does not re-run data
+sources, so the build output must travel with the plan) to `plans/<run_id>.tar`;
+the apply job (`AWS_TF_ROLE_ARN`, behind the `prod` environment approval)
+refuses the stash unless its sha256 matches the plan job's output. Init is
+partial:
 
 ```sh
 terraform init -backend-config="bucket=$TF_STATE_BUCKET" -backend-config="region=$AWS_REGION"
@@ -22,6 +26,14 @@ Inputs come from `TF_VAR_aws_region` and `TF_VAR_budget_email` (required, no
 default). Permissions boundaries (`ned-user-boundary`, `ned-role-boundary`)
 are created by `infra/envs/bootstrap`; their ARNs are built here from the
 caller's account ID.
+
+## Telegram approver
+
+`module.telegram_approver` (`../../modules/telegram-approver`) provisions the
+Lambda that turns a Telegram button tap into a `workflow_dispatch`. Output
+`telegram_approver_url` is the public function URL Telegram posts webhooks
+to; see that module's README for the one-time maintainer setup (GitHub App,
+SSM parameters, webhook registration).
 
 ## State key
 
