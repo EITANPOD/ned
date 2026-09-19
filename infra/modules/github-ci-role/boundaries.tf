@@ -36,6 +36,22 @@ resource "aws_iam_policy" "role_boundary" {
         Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
         Resource = "arn:aws:logs:${var.aws_region}:${var.account_id}:log-group:/ned/*"
       },
+      {
+        Sid    = "NedApproverSecrets"
+        Effect = "Allow"
+        Action = ["ssm:GetParameter", "ssm:GetParameters"]
+        Resource = [
+          "arn:aws:ssm:${var.aws_region}:${var.account_id}:parameter/ned/telegram/*",
+          "arn:aws:ssm:${var.aws_region}:${var.account_id}:parameter/ned/github/*",
+        ]
+      },
+      {
+        Sid       = "NedDecryptViaSsm"
+        Effect    = "Allow"
+        Action    = ["kms:Decrypt"]
+        Resource  = "arn:aws:kms:${var.aws_region}:${var.account_id}:key/*"
+        Condition = { StringEquals = { "kms:ViaService" = "ssm.${var.aws_region}.amazonaws.com" } }
+      },
     ]
   })
 }

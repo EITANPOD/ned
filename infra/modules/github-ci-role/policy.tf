@@ -48,10 +48,10 @@ locals {
       resources = ["${local.iam_arn}:user/ned-*"]
       condition = [{ test = "ArnLike", variable = "iam:PolicyARN", values = ["${local.iam_arn}:policy/ned-*"] }]
     }
-    PassRoleToBedrockOnly = {
+    PassRoleToServices = {
       actions   = ["iam:PassRole"]
       resources = ["${local.iam_arn}:role/ned-*"]
-      condition = [{ test = "StringEquals", variable = "iam:PassedToService", values = ["bedrock.amazonaws.com"] }]
+      condition = [{ test = "StringEquals", variable = "iam:PassedToService", values = ["bedrock.amazonaws.com", "lambda.amazonaws.com"] }]
     }
     # The CI roles must never be changeable by CI: otherwise apply could rewrite itself, or widen the
     # unbounded read/plan roles that PRs and main assume. Deterministic ARNs, not module outputs (cycle).
@@ -120,6 +120,19 @@ locals {
       actions   = ["ssm:DescribeParameters"]
       resources = ["*"]
     }
+    # Telegram approver (infra/modules/telegram-approver). Function URL + resource policy are sub-resources of the function ARN.
+    NedLambda = {
+      actions = [
+        "lambda:CreateFunction", "lambda:DeleteFunction", "lambda:GetFunction", "lambda:GetFunctionConfiguration",
+        "lambda:UpdateFunctionCode", "lambda:UpdateFunctionConfiguration", "lambda:ListVersionsByFunction",
+        "lambda:GetFunctionCodeSigningConfig", "lambda:GetRuntimeManagementConfig",
+        "lambda:CreateFunctionUrlConfig", "lambda:GetFunctionUrlConfig", "lambda:UpdateFunctionUrlConfig",
+        "lambda:DeleteFunctionUrlConfig",
+        "lambda:AddPermission", "lambda:RemovePermission", "lambda:GetPolicy",
+        "lambda:TagResource", "lambda:UntagResource", "lambda:ListTags",
+      ]
+      resources = ["arn:aws:lambda:${var.aws_region}:${var.account_id}:function:ned-*"]
+    }
   }
 
   # Read role (PRs): refresh reads only, no S3 writes of any kind (PR plans run -lock=false, never stash).
@@ -167,6 +180,10 @@ locals {
     BedrockLoggingRead = {
       actions   = ["bedrock:GetModelInvocationLoggingConfiguration"]
       resources = ["*"]
+    }
+    NedLambdaRead = {
+      actions   = ["lambda:Get*", "lambda:List*"]
+      resources = ["arn:aws:lambda:${var.aws_region}:${var.account_id}:function:ned-*"]
     }
   }
 

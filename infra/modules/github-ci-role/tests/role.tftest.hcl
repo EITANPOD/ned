@@ -38,9 +38,9 @@ run "apply_policy_keeps_every_bootstrap_sid" {
   assert {
     condition = sort(keys(local.ci_statements)) == sort([
       "StateBucketList", "StateObjects", "NedIamCreateUserWithBoundary", "NedIamCreateRoleWithBoundary",
-      "NedIamManage", "NedIamAttachScopedPolicies", "PassRoleToBedrockOnly", "DenySelfModifyAndBoundaryRemoval",
+      "NedIamManage", "NedIamAttachScopedPolicies", "PassRoleToServices", "DenySelfModifyAndBoundaryRemoval",
       "DenyBoundaryRemoval", "DenyBoundaryPolicyEdits", "Budgets", "BedrockLoggingConfig", "LogsDescribe",
-      "NedLogGroups", "NedSns", "NedSsmParams", "SsmDescribe",
+      "NedLogGroups", "NedSns", "NedSsmParams", "SsmDescribe", "NedLambda",
     ])
     error_message = "apply policy must carry exactly the bootstrap statements"
   }
@@ -87,8 +87,8 @@ run "apply_policy_conditions" {
     error_message = "CreateRole must require the role boundary"
   }
   assert {
-    condition     = one(local.ci_statements.PassRoleToBedrockOnly.condition).variable == "iam:PassedToService" && one(local.ci_statements.PassRoleToBedrockOnly.condition).values == ["bedrock.amazonaws.com"]
-    error_message = "PassRole must be limited to bedrock.amazonaws.com"
+    condition     = one(local.ci_statements.PassRoleToServices.condition).variable == "iam:PassedToService" && contains(one(local.ci_statements.PassRoleToServices.condition).values, "bedrock.amazonaws.com")
+    error_message = "PassRole must be limited to bedrock.amazonaws.com (and lambda.amazonaws.com)"
   }
   assert {
     condition     = one(local.ci_statements.NedIamAttachScopedPolicies.condition).variable == "iam:PolicyARN"
@@ -139,7 +139,7 @@ run "read_role_is_read_only" {
   assert {
     condition = sort(keys(local.read_statements)) == sort([
       "StateBucketList", "StateRead", "NedIamRead", "LogsDescribe", "NedLogGroupTags", "NedSnsRead",
-      "NedSsmRead", "SsmDescribe", "BudgetsRead", "BedrockLoggingRead",
+      "NedSsmRead", "SsmDescribe", "BudgetsRead", "BedrockLoggingRead", "NedLambdaRead",
     ])
     error_message = "read role statement set drifted"
   }
@@ -169,6 +169,27 @@ run "plan_role_writes_only_lock_and_stash" {
   assert {
     condition     = sort(keys(local.plan_statements)) == sort(concat(keys(local.read_statements), ["PlanStash", "StateLock"]))
     error_message = "plan role must be the read set plus the lock and stash statements"
+  }
+}
+
+run "lambda_permissions" {
+  command = apply
+
+  assert {
+    condition     = local.ci_statements["NedLambda"].resources == ["arn:aws:lambda:${var.aws_region}:${var.account_id}:function:ned-*"]
+    error_message = "apply role Lambda statement must be scoped to function:ned-*"
+  }
+  assert {
+    condition     = contains(local.ci_statements["PassRoleToServices"].condition[0].values, "lambda.amazonaws.com") && contains(local.ci_statements["PassRoleToServices"].condition[0].values, "bedrock.amazonaws.com") && length(local.ci_statements["PassRoleToServices"].condition[0].values) == 2
+    error_message = "PassRole must allow exactly bedrock + lambda"
+  }
+  assert {
+    condition     = local.read_statements["NedLambdaRead"].actions == ["lambda:Get*", "lambda:List*"]
+    error_message = "read role gets Lambda reads only"
+  }
+  assert {
+    condition     = strcontains(aws_iam_policy.role_boundary.policy, "parameter/ned/telegram/*") && strcontains(aws_iam_policy.role_boundary.policy, "kms:ViaService")
+    error_message = "role boundary must allow the approver's SSM reads (KMS via SSM only)"
   }
 }
 

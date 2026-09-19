@@ -11,6 +11,8 @@ two permissions boundaries every CI-created principal must carry.
 | `ned-github-terraform-plan` | `repo:<subject>:ref:refs/heads/main` | Plan on main / dispatch plan (`-lock=true`) | Read set above + state lock rw on `aws/*.tflock` + `s3:PutObject` on `plans/*` (stash for apply). |
 | `ned-github-terraform` (apply) | `repo:<subject>:environment:prod` | Dispatch apply after manual `prod` approval | Least-privilege writes on `ned-*` resources, carried over from `infra/bootstrap/ci_role_policy.tf` (every Sid kept). Denied `iam:*` on all three CI roles. |
 
+Lambda (`ned-telegram-approver`, added by a later task): apply gets a `lambda:*` subset (create/update/tag/permissions) on `function:ned-*`; read/plan get `lambda:Get*`/`lambda:List*` on the same ARNs; the role boundary (`ned-role-boundary`) allows the approver's execution role to read `/ned/telegram/*` and `/ned/github/*` SSM parameters and `kms:Decrypt` scoped to `kms:ViaService = ssm.<region>.amazonaws.com`.
+
 `<subject>` = `<owner>@<owner_id>/<repo>@<repo_id>`: the numeric ids mean a renamed or re-created repo
 cannot re-acquire any role.
 
