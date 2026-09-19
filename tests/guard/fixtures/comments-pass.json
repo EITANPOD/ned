@@ -1,0 +1,10 @@
+[
+ {
+  "user": {
+   "login": "claude[bot]",
+   "type": "Bot"
+  },
+  "body": "## Review\nAll good.\n\nVERDICT: PASS\n",
+  "created_at": "2026-09-18T11:00:00Z"
+ }
+]

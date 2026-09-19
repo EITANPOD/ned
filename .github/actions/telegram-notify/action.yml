@@ -1,0 +1,45 @@
+name: telegram-notify
+# Composite steps have no continue-on-error, so notify.sh's failure is swallowed in the run line:
+# an unreachable Telegram must never fail the caller's workflow. Callers gate follow-ups on outputs.sent.
+description: "Send a Telegram message via the Ned bot (HTML template + escaped args; logs a warning instead of failing the caller)"
+inputs:
+  message:
+    description: "Trusted HTML template (b, i, code, a); {1}..{4} are replaced by the escaped args"
+    required: true
+  arg1:
+    description: "Untrusted text for {1} (HTML-escaped)"
+    required: false
+    default: ""
+  arg2:
+    description: "Untrusted text for {2} (HTML-escaped)"
+    required: false
+    default: ""
+  arg3:
+    description: "Untrusted text for {3} (HTML-escaped)"
+    required: false
+    default: ""
+  arg4:
+    description: "Untrusted text for {4} (HTML-escaped)"
+    required: false
+    default: ""
+  silent:
+    description: disable notification sound
+    required: false
+    default: "false"
+outputs:
+  sent:
+    description: "'true' when Telegram accepted the message"
+    value: ${{ steps.send.outputs.sent }}
+runs:
+  using: composite
+  steps:
+    - id: send
+      shell: bash
+      env:
+        MESSAGE: ${{ inputs.message }}
+        ARG1: ${{ inputs.arg1 }}
+        ARG2: ${{ inputs.arg2 }}
+        ARG3: ${{ inputs.arg3 }}
+        ARG4: ${{ inputs.arg4 }}
+        SILENT: ${{ inputs.silent }}
+      run: bash "$GITHUB_ACTION_PATH/notify.sh" || echo "::warning::telegram notify failed"

@@ -1,1 +1,8 @@
 * @EITANPOD
+# Requests reviews only: code-owner review is not enforced in branch protection (a solo maintainer cannot
+# approve PRs opened under their own identity). The gate itself is listed explicitly so it stays owned.
+/.github/ @EITANPOD
+/.claude/ @EITANPOD
+/CLAUDE.md @EITANPOD
+/.coderabbit.yaml @EITANPOD
+/infra/bootstrap/ @EITANPOD

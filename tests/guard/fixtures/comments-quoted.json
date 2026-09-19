@@ -1,0 +1,10 @@
+[
+ {
+  "user": {
+   "login": "claude[bot]",
+   "type": "Bot"
+  },
+  "body": "Per CLAUDE.md, a clean PR would get VERDICT: PASS, but this one changes the CI role.\n\nVERDICT: HUMAN REVIEW REQUIRED\nSuggested fix: revert the trust change\n",
+  "created_at": "2026-09-18T11:00:00Z"
+ }
+]

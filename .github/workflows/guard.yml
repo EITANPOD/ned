@@ -1,0 +1,314 @@
+name: guard
+
+# pull_request_target: the gate runs main's copy of this file and .github/scripts with a write token, so it must
+# never check out, source, or execute anything from the PR head. The head is fetched as git objects for diffing only.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+  workflow_run:
+    workflows: [claude-review, infra-aws]
+    types: [completed]
+
+permissions: {} # per job below
+
+concurrency:
+  group: guard-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
+
+jobs:
+  # A reviewer or plan landed: re-run the PR's own guard run, so the required check on the PR head is re-evaluated
+  # in place. This job never evaluates anything itself (workflow_run executes on main, off the PR's check context).
+  rerun:
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.pull_requests[0] != null
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout of main for the helper script
+      actions: write # gh run rerun
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+      HEAD: ${{ github.event.workflow_run.head_sha }}
+      BRANCH: ${{ github.event.workflow_run.head_branch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Re-run the latest guard run for this head
+        run: |
+          # The PR moved on: the newer head has its own guard run; re-running would only disturb it.
+          current=$(gh pr view "$PR" -R "$REPO" --json headRefOid -q .headRefOid)
+          [ "$current" = "$HEAD" ] || { echo "PR head is now $current, not $HEAD; nothing to re-run"; exit 0; }
+          id=$(bash .github/scripts/guard-head-runs.sh "$HEAD" | jq -r 'max_by(.created_at) | .id // empty')
+          [ -n "$id" ] || { echo "no guard run for $HEAD yet; the pull_request_target run will see the result"; exit 0; }
+          # A run still in progress cannot be re-run; wait for it (bounded), then re-run so it reads the new evidence.
+          timeout 600 gh run watch "$id" --interval 15 >/dev/null 2>&1 || true
+          gh run rerun "$id"
+
+  guard:
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+    steps:
+      # Default ref = the base branch (main): trusted code only.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # Untrusted PR data never reaches a run: block through ${{ }}; it arrives via env:.
+      - name: PR facts
+        id: pr
+        run: |
+          gh pr view "$PR" --json headRefOid,baseRefOid,headRefName,title,author,isDraft,isCrossRepository > pr.json
+          head=$(jq -r .headRefOid pr.json)
+          # HEAD_TIME: when this head arrived on this PR = earliest guard run for it (server-set; includes this run).
+          # Nothing found → now, so nothing older can count (fail closed).
+          head_time=$(BRANCH=$(jq -r .headRefName pr.json) bash .github/scripts/guard-head-runs.sh "$head" \
+            | jq -r 'map(.created_at) | min // empty')
+          {
+            printf 'head=%s\n' "$head"
+            printf 'head_time=%s\n' "${head_time:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+            printf 'base=%s\n' "$(jq -r .baseRefOid pr.json)"
+            printf 'branch=%s\n' "$(jq -r .headRefName pr.json)"
+            # gh reports bots as app/<name>; normalize to the REST form (dependabot[bot]) the scripts compare against.
+            printf 'actor=%s\n' "$(jq -r '.author | if .is_bot then (.login | sub("^app/"; "")) + "[bot]" else .login end' pr.json)"
+            printf 'draft=%s\n' "$(jq -r .isDraft pr.json)"
+            printf 'fork=%s\n' "$(jq -r .isCrossRepository pr.json)"
+          } >> "$GITHUB_OUTPUT"
+          # title is free text: heredoc form with a random delimiter.
+          d=$(openssl rand -hex 8)
+          { echo "title<<$d"; jq -r .title pr.json; echo "$d"; } >> "$GITHUB_OUTPUT"
+          # One array each (pages merged); read by Verdicts and by guard-marked.sh.
+          gh api "repos/$REPO/issues/$PR/comments" --paginate | jq -s add > comments.json
+          gh api "repos/$REPO/pulls/$PR/reviews" --paginate | jq -s add > reviews.json
+
+      - name: Fork PR note
+        if: steps.pr.outputs.fork == 'true'
+        run: |
+          echo "fork PR: guard reports tier only, no labels/merge" >> "$GITHUB_STEP_SUMMARY"
+
+      # UX only: any push drops the human labels. The binding rule is in guard-labels.sh (label newer than
+      # HEAD_TIME), which still holds if this step is cancelled by a newer run. First attempt only: re-runs
+      # (triggered by the rerun job) replay the synchronize payload and must not strip labels added since.
+      - name: Strip human labels on new commits
+        if: >-
+          github.event.action == 'synchronize' && github.run_attempt == 1 &&
+          steps.pr.outputs.fork == 'false'
+        run: |
+          for l in human-approved allow-destroy; do
+            if gh pr view "$PR" --json labels -q '.labels[].name' | grep -qx -- "$l"; then
+              gh pr edit "$PR" --remove-label "$l" >/dev/null
+              gh pr comment "$PR" --body "guard: removed label \`$l\` because new commits were pushed. Re-add it after reviewing the current head." >/dev/null
+            fi
+          done
+
+      - name: Changed files (name-status)
+        env:
+          HEAD: ${{ steps.pr.outputs.head }}
+          BASE: ${{ steps.pr.outputs.base }}
+          BEFORE: ${{ github.event.before }}
+          ACTION: ${{ github.event.action }}
+          FORK: ${{ steps.pr.outputs.fork }}
+        run: |
+          # Objects only: nothing from the PR head is checked out or executed.
+          git fetch -q origin "refs/pull/$PR/head"
+          git diff --name-status --no-renames "$BASE...$HEAD" > changed.txt
+          marker="<!-- guard-forcepush:$HEAD -->"
+          marked() { bash .github/scripts/guard-marked.sh "$marker"; } # force push already recorded for this head
+          # force push: the previous head is gone or is not an ancestor of the current head
+          if [ "$ACTION" = synchronize ] && [ -n "$BEFORE" ]; then
+            if git fetch -q origin "$BEFORE" 2>/dev/null && git merge-base --is-ancestor "$BEFORE" "$HEAD"; then
+              FORCE_PUSH=false
+            else
+              FORCE_PUSH=true
+            fi
+            # sticky: later events for this head (labeled, workflow_run) carry no 'before' to re-derive it from
+            if [ "$FORCE_PUSH" = true ] && [ "$FORK" = false ] && ! marked; then
+              gh pr comment "$PR" --body "$marker guard: force push detected on this branch; the tier stays high for this head." >/dev/null
+            fi
+          elif marked; then
+            FORCE_PUSH=true
+          else
+            FORCE_PUSH=false
+          fi
+          echo "FORCE_PUSH=$FORCE_PUSH" >> "$GITHUB_ENV"
+
+      - name: Latest terraform plan text for this head (if any)
+        env:
+          HEAD: ${{ steps.pr.outputs.head }}
+          BRANCH: ${{ steps.pr.outputs.branch }}
+        run: |
+          rid=$(gh run list --workflow=infra-aws.yml -b "$BRANCH" -L 100 --json databaseId,headSha,status \
+            | jq -r --arg h "$HEAD" '[.[] | select(.headSha == $h and .status == "completed")] | first | .databaseId // empty')
+          # The artifact is PR-produced data: extract it outside the workspace (next to nothing we execute), parse only.
+          if [ -n "$rid" ]; then
+            gh run download "$rid" -n plan-text -D "$RUNNER_TEMP/plan" || true
+          else
+            # No completed infra-aws run for this head yet: the rerun job re-runs this check when it completes.
+            echo "SKIP_ALERT=1" >> "$GITHUB_ENV"
+          fi
+          if [ -f "$RUNNER_TEMP/plan/plan.txt" ]; then
+            echo "PLAN_FILE=$RUNNER_TEMP/plan/plan.txt" >> "$GITHUB_ENV"
+          else
+            echo "PLAN_FILE=" >> "$GITHUB_ENV"
+          fi
+
+      - name: Verdicts
+        id: verdicts
+        env:
+          HEAD_SHA: ${{ steps.pr.outputs.head }}
+          HEAD_TIME: ${{ steps.pr.outputs.head_time }}
+        run: COMMENTS_JSON=comments.json REVIEWS_JSON=reviews.json bash .github/scripts/guard-verdicts.sh | tee -a "$GITHUB_OUTPUT"
+
+      # Verdicts first: a HUMAN REVIEW REQUIRED verdict raises the tier.
+      - name: Classify
+        id: tier
+        env:
+          PR_TITLE: ${{ steps.pr.outputs.title }}
+          PR_ACTOR: ${{ steps.pr.outputs.actor }}
+          CLAUDE_VERDICT: ${{ steps.verdicts.outputs.claude }}
+        run: bash .github/scripts/guard-tier.sh < changed.txt | tee -a "$GITHUB_OUTPUT"
+
+      - name: Labels
+        id: labels
+        if: steps.pr.outputs.fork == 'false'
+        env:
+          TIER: ${{ steps.tier.outputs.tier }}
+          HEAD_TIME: ${{ steps.pr.outputs.head_time }}
+        run: bash .github/scripts/guard-labels.sh | tee -a "$GITHUB_OUTPUT"
+
+      - name: Summary
+        env:
+          TIER: ${{ steps.tier.outputs.tier }}
+          REASONS: ${{ steps.tier.outputs.reasons }}
+          CLAUDE_V: ${{ steps.verdicts.outputs.claude }}
+          CR_V: ${{ steps.verdicts.outputs.coderabbit }}
+          APPROVED: ${{ steps.labels.outputs.approved }}
+          DESTROY_OK: ${{ steps.labels.outputs.destroy_ok }}
+        run: |
+          {
+            echo "## guard: tier **$TIER**"
+            echo "- reasons: $REASONS"
+            echo "- claude: $CLAUDE_V · coderabbit: $CR_V"
+            echo "- human-approved: $APPROVED · allow-destroy: $DESTROY_OK"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Alert check (medium/high, once per head)
+        if: >-
+          steps.pr.outputs.fork == 'false' && steps.tier.outputs.tier != 'low' &&
+          !(env.SKIP_ALERT == '1' && contains(steps.tier.outputs.reasons, 'no terraform plan available'))
+        env:
+          HEAD: ${{ steps.pr.outputs.head }}
+        run: |
+          if bash .github/scripts/guard-marked.sh "<!-- guard-alerted:$HEAD -->"; then
+            echo "already alerted for this head"
+          else
+            echo "ALERT=1" >> "$GITHUB_ENV"
+          fi
+
+      # message = trusted template; PR-controlled text (title, paths in reasons, reviewer fix) only via arg1..3.
+      - id: alert
+        uses: ./.github/actions/telegram-notify
+        if: env.ALERT == '1'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        with:
+          message: |
+            ${{ steps.tier.outputs.tier == 'high' && '🛑 <b>HIGH</b>' || '🟠 <b>MEDIUM</b>' }} | PR #${{ env.PR }} {1}
+            Why: {2}
+            Reviewers: claude=${{ steps.verdicts.outputs.claude }}, coderabbit=${{ steps.verdicts.outputs.coderabbit }}
+            Suggested fix: {3}
+            <a href="${{ github.server_url }}/${{ github.repository }}/pull/${{ env.PR }}">PR</a> · approve by adding label <code>human-approved</code>${{ steps.tier.outputs.destroys != '0' && ' + <code>allow-destroy</code>' || '' }}
+          arg1: ${{ steps.pr.outputs.title }}
+          arg2: ${{ steps.tier.outputs.reasons }}
+          arg3: ${{ steps.verdicts.outputs.suggested_fix || 'n/a' }}
+
+      # Marked only when Telegram accepted it, so a failed send is retried by the next run for this head.
+      - name: Mark alerted
+        if: steps.alert.outputs.sent == 'true'
+        env:
+          HEAD: ${{ steps.pr.outputs.head }}
+          TIER: ${{ steps.tier.outputs.tier }}
+        run: |
+          gh pr comment "$PR" --body "<!-- guard-alerted:$HEAD --> guard: tier $TIER — Telegram alert sent." >/dev/null
+
+      # Runs for forks too: medium/high must still block. The merge call is gated on FORK below.
+      - name: Decide
+        id: decide
+        env:
+          HEAD: ${{ steps.pr.outputs.head }}
+          REASONS: ${{ steps.tier.outputs.reasons }}
+          TIER: ${{ steps.tier.outputs.tier }}
+          DESTROYS: ${{ steps.tier.outputs.destroys }}
+          CLAUDE_V: ${{ steps.verdicts.outputs.claude }}
+          CR_V: ${{ steps.verdicts.outputs.coderabbit }}
+          ACTOR: ${{ steps.pr.outputs.actor }}
+          APPROVED: ${{ steps.labels.outputs.approved }}
+          DESTROY_OK: ${{ steps.labels.outputs.destroy_ok }}
+          DRAFT: ${{ steps.pr.outputs.draft }}
+          FORK: ${{ steps.pr.outputs.fork }}
+        run: |
+          # Low is clean when Claude passed this head (Dependabot: Claude skipped by design) and CodeRabbit has
+          # no findings on this head. CodeRabbit 'missing' does not block: it needs a manual trigger on small repos.
+          clean=false
+          if { [ "$CLAUDE_V" = pass ] || [ "$ACTOR" = "dependabot[bot]" ]; } && [ "$CR_V" != findings ]; then clean=true; fi
+          armed=false
+          if [ "$TIER" = low ] && [ "$clean" = true ] && [ "$DRAFT" = false ] && [ "$FORK" = false ]; then
+            gh pr merge "$PR" --auto --squash --match-head-commit "$HEAD" >/dev/null
+            armed=true
+            echo "auto-merge armed"
+          else
+            # anything armed for an earlier head (or by hand) must not merge this one; no-op when not armed
+            gh pr merge "$PR" --disable-auto >/dev/null 2>&1 || true
+            echo "auto-merge not armed (tier=$TIER clean=$clean draft=$DRAFT fork=$FORK)"
+          fi
+          echo "armed=$armed" >> "$GITHUB_OUTPUT"
+          # No plan yet for an infra change: never pass, whatever the labels (the rerun job re-evaluates when it lands).
+          case "$REASONS" in *"no terraform plan available"*) echo "::error::waiting for terraform plan for this head"; exit 1;; esac
+          case "$TIER" in
+            low) ;;
+            medium)
+              [ "$APPROVED" = true ] || { echo "::error::medium tier: add label human-approved"; exit 1; } ;;
+            high)
+              [ "$APPROVED" = true ] || { echo "::error::high tier: add label human-approved"; exit 1; }
+              if [ "${DESTROYS:-0}" -gt 0 ]; then
+                [ "$DESTROY_OK" = true ] || { echo "::error::plan destroys resources: add label allow-destroy"; exit 1; }
+              fi ;;
+            *)
+              echo "::error::unknown tier $TIER"; exit 1 ;;
+          esac
+
+      - name: Digest check (once per head)
+        if: steps.decide.outputs.armed == 'true'
+        env:
+          HEAD: ${{ steps.pr.outputs.head }}
+        run: |
+          bash .github/scripts/guard-marked.sh "<!-- guard-digest:$HEAD -->" || echo "DIGEST=1" >> "$GITHUB_ENV"
+
+      - id: digest
+        uses: ./.github/actions/telegram-notify
+        if: env.DIGEST == '1'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        with:
+          silent: "true"
+          message: "🟢 low | PR #${{ env.PR }} {1} — auto-merge armed (claude=${{ steps.verdicts.outputs.claude }}, coderabbit=${{ steps.verdicts.outputs.coderabbit }})"
+          arg1: ${{ steps.pr.outputs.title }}
+
+      - name: Mark digested
+        if: steps.digest.outputs.sent == 'true'
+        env:
+          HEAD: ${{ steps.pr.outputs.head }}
+        run: |
+          gh pr comment "$PR" --body "<!-- guard-digest:$HEAD --> guard: low tier, auto-merge armed — Telegram digest sent." >/dev/null

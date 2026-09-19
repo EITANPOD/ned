@@ -1,0 +1,30 @@
+name: main-red
+
+on:
+  workflow_run:
+    workflows: [pre-commit, infra-aws]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  alert:
+    # Only runs that executed main itself: pushes and manual dispatches. PR-triggered runs (including fork PRs
+    # from a branch named main) and guard runs are not "main red".
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/telegram-notify
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        with:
+          message: "❌ <b>{1} failed on main</b> — <a href=\"${{ github.event.workflow_run.html_url }}\">run</a>"
+          arg1: ${{ github.event.workflow_run.name }}

@@ -1,0 +1,10 @@
+[
+ {
+  "user": {
+   "login": "coderabbitai[bot]"
+  },
+  "commit_id": "abc123",
+  "state": "COMMENTED",
+  "body": "**Actionable comments posted: 7**"
+ }
+]
