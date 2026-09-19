@@ -8,6 +8,7 @@ node_modules/
 .next/
 .terraform/
 infra/modules/**/.terraform.lock.hcl
+.build/
 *.tfstate
 *.tfstate.*
 .tfplan

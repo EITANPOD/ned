@@ -11,13 +11,15 @@ two permissions boundaries every CI-created principal must carry.
 | `ned-github-terraform-plan` | `repo:<subject>:ref:refs/heads/main` | Plan on main / dispatch plan (`-lock=true`) | Read set above + state lock rw on `aws/*.tflock` + `s3:PutObject` on `plans/*` (stash for apply). |
 | `ned-github-terraform` (apply) | `repo:<subject>:environment:prod` | Dispatch apply after manual `prod` approval | Least-privilege writes on `ned-*` resources, carried over from `infra/bootstrap/ci_role_policy.tf` (every Sid kept). Denied `iam:*` on all three CI roles. |
 
+Lambda (`ned-telegram-approver`): apply gets a `lambda:*` subset (create/update/tag/permissions) on `function:ned-*`; read/plan get `lambda:Get*`/`lambda:List*` on the same ARNs. Read and plan are denied `ssm:GetParameter(s)`/`GetParametersByPath` on `/ned/telegram/*` and `/ned/github/*` (`DenyApproverSecrets`) — apply is unchanged. The role boundary (`ned-role-boundary`) allows the approver's execution role to read those same SSM parameters and `kms:Decrypt` scoped to `kms:ViaService = ssm.<region>.amazonaws.com`.
+
 `<subject>` = `<owner>@<owner_id>/<repo>@<repo_id>`: the numeric ids mean a renamed or re-created repo
 cannot re-acquire any role.
 
 ### Why three roles
 
 - **PR code never gets write credentials.** PR-authored Terraform (providers, external data sources)
-  runs under the read role, so it cannot overwrite a `plans/<run>.tfplan` waiting for approval (which
+  runs under the read role, so it cannot overwrite a `plans/<run>.tar` stash waiting for approval (which
   the apply role would then apply) and cannot create or delete the state lock.
 - **Only main can stash a plan or take the lock**, and main is reviewed code.
 - **The apply role cannot widen the other two.** Its `NedIamManage` grants cover `role/ned-*`, which
@@ -45,6 +47,10 @@ therefore exfiltrate the runtime key. Blast radius: Bedrock invoke on the allowe
 runtime user's policy and boundary), capped by the $10 monthly budget alert. Planned fix (deploy phase):
 mint the runtime credential outside Terraform, or use workload identity for the VM, so no long-lived
 secret is in state.
+
+The approver secrets (`/ned/telegram/*`, `/ned/github/*`) are excluded from this exposure:
+`DenyApproverSecrets` explicitly denies `ssm:GetParameter(s)`/`GetParametersByPath` on those paths to the
+read and plan roles (the apply role is unchanged — main-only, behind the `prod` environment approval).
 
 ## Official modules used
 

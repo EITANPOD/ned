@@ -43,11 +43,12 @@ Created by `modules/github-ci-role` (details and rationale in its README).
 | Job | Trigger | Role (repo variable) | S3 access |
 |-----|---------|----------------------|-----------|
 | `plan` | `pull_request` (same-repo, `infra/` changed) | `ned-github-terraform-read` (`AWS_TF_READ_ROLE_ARN`) | read state; `-lock=false`; no stash |
-| `plan` | `workflow_dispatch` on `main` | `ned-github-terraform-plan` (`AWS_TF_PLAN_ROLE_ARN`) | read state, lock, write `plans/<run_id>.tfplan` |
+| `plan` | `workflow_dispatch` on `main` | `ned-github-terraform-plan` (`AWS_TF_PLAN_ROLE_ARN`) | read state, lock, write `plans/<run_id>.tar` |
 | `apply` | dispatch `action=apply`, env `prod` approval | `ned-github-terraform` (`AWS_TF_ROLE_ARN`) | state rw, read the stash |
 
-A dispatch plan stashes the tfplan only for `action=apply` with changes, and exports its sha256 as a job
-output; `apply` fails unless the fetched stash matches it. `check` (fmt, validate, tflint, trivy) and `module-tests (<module>)` (`terraform test`
+A dispatch plan stashes a tarball of the `tfplan` and the plan-time `.build/` (Lambda zip) only for
+`action=apply` with changes, and exports the tarball's sha256 as a job output; `apply` fails unless the
+fetched stash matches it. `check` (fmt, validate, tflint, trivy) and `module-tests (<module>)` (`terraform test`
 per module) run on every PR; `module-tests` is not yet a required check (add it to branch protection
 once it has run on `main`).
 
