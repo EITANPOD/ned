@@ -88,7 +88,9 @@ Removed: CodeRabbit (`.coderabbit.yaml`, verdict parsing, README section), tiers
   This is the agent identity deferred in Phase 0 — now needed.
 - Secrets: SSM `/ned/telegram/bot-token`, `/ned/telegram/webhook-secret`, `/ned/github/dispatch-token`
   (SecureString, created by the maintainer, never in Terraform state); `/ned/telegram/approver-id` (String).
-  App private key: GitHub Actions secret `NED_APP_PRIVATE_KEY`, app id in variable `NED_APP_ID`.
+  App private key and id: GitHub environment `ned-bot` (deployment branch policy restricted to `main`),
+  secret `NED_APP_PRIVATE_KEY` and variable `NED_APP_ID` — a branch workflow could otherwise mint an app
+  token and forge an approval. `NED_APP_SLUG` stays a repo variable (not secret; the guard needs it too).
 - Lambda IAM: `ssm:GetParameter(s)` on exactly those ARNs + `kms:Decrypt` via `aws/ssm` condition; logs. Reserved
   concurrency 2 (caps abuse; free tier: 1M requests/month).
 - Branch protection unchanged: required checks `lint`, `check`, `guard`; `enforce_admins`. Nothing bypasses `guard`.

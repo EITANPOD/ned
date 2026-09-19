@@ -28,8 +28,8 @@ authenticates every request itself, comparing the
 grants: `lambda:InvokeFunctionUrl` (the URL itself) and `lambda:InvokeFunction`
 scoped with `invoked_via_function_url = true` (the underlying invoke). Both
 attributes are present on the pinned aws provider (6.65.0, confirmed via
-`terraform providers schema -json`), so both resources are kept as written in
-the task brief — no fallback needed for older provider versions.
+`terraform providers schema -json`), so both resources are kept as-is — no
+fallback needed for older provider versions.
 
 ## Packaging
 
@@ -48,12 +48,19 @@ Logs go to `/ned/lambda/telegram-approver`, inside the `ned-role-boundary`'s
 
 ## One-time setup (maintainer)
 
+Apply `infra/envs/bootstrap` locally first (github-ci-role's `NedLambda` grants and the approver-secrets
+deny), same as any other change to `modules/github-ci-role`, before the `envs/prod` apply that creates this
+Lambda — see `infra/README.md`'s "Add a module" step 4.
+
 1. GitHub App: Settings → Developer settings → GitHub Apps → New. Name `ned-bot-<you>`, no webhook, permissions:
    Contents RW, Pull requests RW, Issues RW, Metadata R (no Workflows). Install on `EITANPOD/ned` only.
-   Generate a private key. Then:
-   `gh secret set NED_APP_PRIVATE_KEY -R EITANPOD/ned < key.pem && rm key.pem`
-   `gh variable set NED_APP_ID -R EITANPOD/ned --body <app id>`
-   `gh variable set NED_APP_SLUG -R EITANPOD/ned --body <app slug>`
+   Generate a private key. Store the key and app id in a GitHub environment (`ned-bot`, restricted to
+   `main`), not repo-wide: a branch workflow with repo-wide access to the key could otherwise mint an app
+   token and forge an approval. Then:
+   `gh api -X PUT repos/EITANPOD/ned/environments/ned-bot --input <(echo '{"deployment_branch_policy":{"protected_branches":true,"custom_branch_policies":false}}')`
+   `gh secret set NED_APP_PRIVATE_KEY --env ned-bot -R EITANPOD/ned < key.pem && rm key.pem`
+   `gh variable set NED_APP_ID --env ned-bot -R EITANPOD/ned --body <app id>`
+   `gh variable set NED_APP_SLUG -R EITANPOD/ned --body <app slug>` (repo variable, not secret: the guard also reads it)
 2. Fine-grained PAT: repo `EITANPOD/ned` only, permission **Actions: Read and write** only, 1-year expiry.
 3. SSM (AWS_PROFILE=eitan):
    `aws ssm put-parameter --name /ned/github/dispatch-token --type SecureString --value '<PAT>'`
