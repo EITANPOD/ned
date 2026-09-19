@@ -23,7 +23,7 @@ rules=(
   "${GIT}${F}push${ARGS}${F}(--force[^[:space:]]*|--delete|-[a-z]*[fd][a-z]*|\+[^[:space:]]+|:[^[:space:]]*|(([^[:space:]]*:)?(refs/heads/)?main))${END}"
   "${GIT}${F}reset${F}--hard"
   "gh${F}pr${F}merge"
-  "gh${F}(pr|issue)${F}edit${ARGS}${F}--add-label"
+  "gh${F}(pr|issue)${F}edit${ARGS}${F}--(add|remove)-label"   # labels are the human's approval channel
   "gh${F}secret"
   "gh${F}variable${F}set"
   "gh${F}api${ARGS}${F}(-X|--method)(=|[[:space:]]*)(DELETE|PUT|PATCH)${END}"
@@ -79,17 +79,25 @@ graphql_unsafe() { # gh api graphql is allowed only when every -f/-F query= valu
   ((found == 0))
 }
 
-push_from_main() { # bare `git push` / `git push <remote>` pushes the current branch; block it on main
-  [[ $1 =~ ^${GIT}${F}push(${F}-[^[:space:]]+)*(${F}[^-[:space:]][^[:space:]]*)?(${F}-[^[:space:]]+)*$ ]] || return 1
+push_from_main() { # `git push [<remote> [HEAD|@]]` pushes the current branch; block it on main
+  [[ $1 =~ ^${GIT}${F}push(${F}-[^[:space:]]+)*(${F}[^-[:space:]][^[:space:]]*(${F}(HEAD|@))?)?(${F}-[^[:space:]]+)*$ ]] || return 1
   [[ $(git rev-parse --abbrev-ref HEAD 2>/dev/null) == main ]]
 }
 
-branch_force_delete() { # case-sensitive on purpose: -D force-deletes, -d is the safe merged-only delete
-  local hit=1
-  shopt -u nocasematch
-  [[ $1 =~ ^${GIT}${F}branch${ARGS}${F}-D${END} ]] && hit=0
+branch_force_delete() { # -D, -df/-fd, or delete + force in any order/form; -d alone (merged only) passes
+  [[ $1 =~ ^${GIT}${F}branch([[:space:]]|$) ]] || return 1
+  local d=0 f=0 t toks
+  read -ra toks <<<"${1#*branch}"
+  shopt -u nocasematch   # -D vs -d matters here
+  for t in "${toks[@]}"; do
+    case $t in
+      --delete) d=1;; --force) f=1;; --*) ;;
+      -*D*) d=1; f=1;;
+      -*) [[ $t == *d* ]] && d=1; [[ $t == *f* ]] && f=1;;
+    esac
+  done
   shopt -s nocasematch
-  return $hit
+  ((d && f))
 }
 
 block() {

@@ -42,6 +42,10 @@ block=(
   "gh api graphql -F query=@q.graphql" "gh api graphql -f query='{ viewer { login } }'"
   "gh api graphql -f query='query { a }' -f query='mutation { b }'" "gh api graphql --input q.json"
   "gh api graphql -f query='query { a } mutation { b }' -f operationName=b"
+  # round 3: every agent label edit; every force-delete form
+  "gh pr edit 3 --remove-label needs-human" "gh issue edit 3 --remove-label tier:high" "gh pr edit 3 --add-label x --title y"
+  "git branch -df x" "git branch -fd x" "git branch --delete --force x" "git branch --force --delete x" "git branch -d -f x"
+  "git branch -f -d x" "git branch --delete -f x" "git branch -D x" "git -C /r branch -D x"
   # s3api deletes
   "aws s3api delete-object --bucket b --key k" "aws --profile p s3api delete-bucket --bucket b"
 )
@@ -57,7 +61,7 @@ allow=(
   "git commit -m \"docs: terraform apply\"" "gh pr create --body \"never gh pr merge\"" "echo 'rm -rf /' > notes.txt"
   "gh pr edit 3 --title x" "gh api graphql -f query='query { viewer { login } }'" "git push origin mainline" "aws s3api list-buckets"
   "gh api repos/o/r/issues/3/labels" "gh api graphql -f query='query { repository(owner:\"o\", name:\"r\") { labels(first:5) { nodes { name } } } }'"
-  "git branch -d merged-branch"
+  "git branch -d merged-branch" "git branch --delete merged" "git branch -f topic origin/topic" "gh pr edit 3 --title x --body y"
 )
 for c in "${allow[@]}"; do
   assert_eq 0 "$(blocked "$c")" "allow: $c"
@@ -66,11 +70,11 @@ done
 repo=$(mktemp -d)
 git -C "$repo" init -q -b main
 git -C "$repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
-for c in "git push" "git push origin" "git push -u origin"; do
+for c in "git push" "git push origin" "git push -u origin" "git push origin HEAD" "git push origin @" "git push -u origin HEAD"; do
   assert_eq 2 "$(cd "$repo" && blocked "$c")" "block on main: $c"
 done
 git -C "$repo" checkout -q -b feature
-for c in "git push" "git push origin"; do
+for c in "git push" "git push origin" "git push origin HEAD" "git push -u origin HEAD"; do
   assert_eq 0 "$(cd "$repo" && blocked "$c")" "allow on feature: $c"
 done
 assert_eq 0 "$(cd "$repo" && blocked "git push -u origin feature")" "allow on feature: explicit refspec"
