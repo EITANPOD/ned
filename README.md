@@ -37,7 +37,7 @@ Every PR gets a risk tier from `.github/scripts/guard-tier.sh` (paths, terraform
 | medium | blocked until you add label `human-approved` | Telegram alert with reasons + reviewer's suggested fix |
 | high | blocked until `human-approved` (+ `allow-destroy` for destroys) | same, marked HIGH |
 
-Labels only count when added by a repo admin after the current head was pushed (GitHub's own timestamps: the label event vs. the first guard run for that head on the PR); any push also strips `human-approved` and `allow-destroy`. With `strict: true` branch protection, "Update branch" is a push too, so it needs a fresh `human-approved`.
+Labels only count when added by a repo admin after the current head was pushed (GitHub's own timestamps: the label event vs. the first guard run for that head on the PR); any push also strips `human-approved` and `allow-destroy`. With `strict: true` branch protection, "Update branch" is a push too, so it needs a fresh `human-approved`. In short: after **any** push, re-add `human-approved` (and `allow-destroy`) once you have reviewed the new head; an older label never carries over, even if the strip is skipped. Agents cannot add or remove labels: the `.claude` hook blocks `gh pr|issue edit --add-label/--remove-label` and label writes through `gh api`.
 
 Reviewer verdicts are machine-read and bound to the current head: Claude (`claude[bot]` only) must post `VERDICT: PASS` or `VERDICT: HUMAN REVIEW REQUIRED` + `Suggested fix:` after the head was pushed; CodeRabbit counts only for a review of this exact commit. CodeRabbit with no review does not block Low (it needs a manual `@coderabbitai review` below 10 stars); CodeRabbit with findings does. A Low PR that stops being clean has auto-merge disabled.
 
