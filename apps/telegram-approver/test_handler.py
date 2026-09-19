@@ -79,6 +79,18 @@ class HandleTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual((c.dispatched, c.answers), ([], []))
 
+    def test_invalid_json_body_is_silently_dropped(self):
+        status, c = run({"headers": {"x-telegram-bot-api-secret-token": "s3cret"}, "body": "not json"})
+        self.assertEqual(status, 200)
+        self.assertEqual((c.dispatched, c.answers), ([], []))
+
+    def test_callback_query_missing_id_is_silently_dropped(self):
+        ev = event()
+        ev["body"] = json.dumps({"callback_query": {"from": {"id": 42}, "data": "a:12:" + SHA}})
+        status, c = run(ev)
+        self.assertEqual(status, 200)
+        self.assertEqual((c.dispatched, c.answers), ([], []))
+
 
 if __name__ == "__main__":
     unittest.main()

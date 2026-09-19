@@ -19,10 +19,13 @@ def handle(event, cfg, dispatch, answer):
     body = event.get("body") or "{}"
     if event.get("isBase64Encoded"):
         body = base64.b64decode(body).decode()
-    query = json.loads(body).get("callback_query")
-    if not query:
+    try:
+        query = json.loads(body).get("callback_query")
+        if not query:
+            return 200
+        cid = query["id"]
+    except (json.JSONDecodeError, KeyError, TypeError):
         return 200
-    cid = query["id"]
     if str(query.get("from", {}).get("id")) != cfg["approver_id"]:
         answer(cid, "not authorised")
         return 200
@@ -69,7 +72,7 @@ def lambda_handler(event, context):
                 "User-Agent": "ned-telegram-approver",
             }) == 204
         except OSError as err:  # urllib.error.URLError/HTTPError subclass OSError
-            print(f"dispatch failed: {err}")
+            print(f"dispatch failed: {type(err).__name__}")
             return False
 
     def answer(cid, text):
