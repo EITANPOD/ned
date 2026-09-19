@@ -91,6 +91,26 @@ class HandleTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual((c.dispatched, c.answers), ([], []))
 
+    def test_json_array_body_is_silently_dropped(self):
+        ev = event()
+        ev["body"] = json.dumps([1, 2, 3])
+        status, c = run(ev)
+        self.assertEqual(status, 200)
+        self.assertEqual((c.dispatched, c.answers), ([], []))
+
+    def test_null_from_is_refused_not_a_crash(self):
+        ev = event()
+        ev["body"] = json.dumps({"callback_query": {"id": "cb1", "from": None, "data": "a:12:" + SHA}})
+        status, c = run(ev)
+        self.assertEqual(status, 200)
+        self.assertEqual(c.dispatched, [])
+        self.assertIn("not authorised", c.answers[0])
+
+    def test_invalid_base64_body_is_silently_dropped(self):
+        status, c = run({"headers": {"x-telegram-bot-api-secret-token": "s3cret"}, "body": "not-valid-base64!!", "isBase64Encoded": True})
+        self.assertEqual(status, 200)
+        self.assertEqual((c.dispatched, c.answers), ([], []))
+
 
 if __name__ == "__main__":
     unittest.main()
