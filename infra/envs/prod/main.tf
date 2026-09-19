@@ -27,3 +27,12 @@ module "budget_alerts" {
   email      = var.budget_email
   limit_usd  = var.budget_limit_usd
 }
+
+module "telegram_approver" {
+  source = "../../modules/telegram-approver"
+
+  aws_region        = var.aws_region
+  account_id        = local.account_id
+  role_boundary_arn = local.role_boundary_arn
+  repo              = "EITANPOD/ned"
+}

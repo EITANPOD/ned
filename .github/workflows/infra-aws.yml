@@ -78,7 +78,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [github-ci-role, bedrock-runtime, budget-alerts]
+        module: [github-ci-role, bedrock-runtime, budget-alerts, telegram-approver]
     env:
       MODULE: ${{ matrix.module }}
     steps:
