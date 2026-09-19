@@ -5,4 +5,5 @@
 /.claude/ @EITANPOD
 /CLAUDE.md @EITANPOD
 /.coderabbit.yaml @EITANPOD
-/infra/bootstrap/ @EITANPOD
+/infra/envs/bootstrap/ @EITANPOD
+/infra/modules/github-ci-role/ @EITANPOD

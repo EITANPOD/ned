@@ -1,4 +1,4 @@
-# Permissions boundaries attached (by infra/aws) to every IAM principal Ned's CI creates.
+# Permissions boundaries attached (by infra/envs/prod) to every IAM principal Ned's CI creates.
 # The CI role may only create a principal that carries the matching boundary, so even a
 # rewritten inline policy cannot exceed it. They are split by principal type on purpose:
 # users get Bedrock, roles get log writes only. CI can set an arbitrary trust policy on a
@@ -34,7 +34,7 @@ resource "aws_iam_policy" "role_boundary" {
         Sid      = "NedLogsWrite"
         Effect   = "Allow"
         Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
-        Resource = "arn:aws:logs:${var.aws_region}:${local.account_id}:log-group:/ned/*"
+        Resource = "arn:aws:logs:${var.aws_region}:${var.account_id}:log-group:/ned/*"
       },
     ]
   })

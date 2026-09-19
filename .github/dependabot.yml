@@ -5,10 +5,22 @@ updates:
     schedule:
       interval: weekly
   - package-ecosystem: terraform
-    directory: /infra/bootstrap
+    directory: /infra/envs/bootstrap
     schedule:
       interval: weekly
   - package-ecosystem: terraform
-    directory: /infra/aws
+    directory: /infra/envs/prod
+    schedule:
+      interval: weekly
+  - package-ecosystem: terraform
+    directory: /infra/modules/github-ci-role
+    schedule:
+      interval: weekly
+  - package-ecosystem: terraform
+    directory: /infra/modules/bedrock-runtime
+    schedule:
+      interval: weekly
+  - package-ecosystem: terraform
+    directory: /infra/modules/budget-alerts
     schedule:
       interval: weekly

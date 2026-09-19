@@ -13,4 +13,4 @@ reviews:
     - path: ".github/workflows/**"
       instructions: "GitHub Actions: third-party actions pinned to a full commit SHA with a # vX.Y.Z comment, minimal per-job permissions, no apply on push, no long-lived cloud keys."
     - path: "**"
-      instructions: "Escalate (do not just suggest) when: IAM trust/boundary/CI-role changes, wildcard actions or resources, secrets in diff, workflow permission widening or unpinned actions, deleted tests, terraform destroys, or edits under .github/workflows/guard.yml, .github/workflows/infra-aws.yml, .github/workflows/claude-review.yml, .github/actions, .github/scripts, .claude, CLAUDE.md, .coderabbit.yaml. State the concrete fix."
+      instructions: "Escalate (do not just suggest) when: IAM trust/boundary/CI-role changes, wildcard actions or resources, secrets in diff, workflow permission widening, a workflow gaining id-token: write, or unpinned actions, deleted tests, terraform destroys, or edits under .github/workflows/guard.yml, .github/workflows/infra-aws.yml, .github/workflows/claude-review.yml, .github/actions, .github/scripts, .claude, CLAUDE.md, .coderabbit.yaml. State the concrete fix."

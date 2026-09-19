@@ -30,9 +30,8 @@ jobs:
   check:
     name: check
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: infra/aws
+    env:
+      TF_ROOTS: infra/envs/prod infra/envs/bootstrap
     outputs:
       infra_changed: ${{ steps.changed.outputs.infra_changed }}
     steps:
@@ -50,15 +49,21 @@ jobs:
         with:
           terraform_version: "1.14.9"
           terraform_wrapper: false
-      - run: terraform fmt -check -recursive
-      - run: terraform init -backend=false
-      - run: terraform validate
-      - run: terraform test
+      - run: terraform fmt -check -recursive infra
       - uses: terraform-linters/setup-tflint@1cf010d3c7aef302051ccdb68c14c5dc2efa34ef # v6.3.1
         with:
           tflint_version: v0.64.0
       - run: tflint --init --config "$GITHUB_WORKSPACE/.tflint.hcl"
-      - run: tflint --config "$GITHUB_WORKSPACE/.tflint.hcl"
+      # Both roots (call_module_type = all, so every module they call is linted too).
+      - name: Validate and lint each root
+        run: |
+          for d in $TF_ROOTS; do
+            echo "::group::$d"
+            terraform -chdir="$d" init -backend=false
+            terraform -chdir="$d" validate
+            tflint --chdir="$d" --config "$GITHUB_WORKSPACE/.tflint.hcl"
+            echo "::endgroup::"
+          done
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: config
@@ -66,8 +71,29 @@ jobs:
           exit-code: "1"
           severity: HIGH,CRITICAL
 
+  # Not yet a required check (add `module-tests (<module>)` to branch protection once it has run on main).
+  module-tests:
+    name: module-tests (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [github-ci-role, bedrock-runtime, budget-alerts]
+    env:
+      MODULE: ${{ matrix.module }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.14.9"
+          terraform_wrapper: false
+      - run: cd "infra/modules/$MODULE" && terraform init -backend=false && terraform test
+
   # On pull_request this job runs PR-authored Terraform (providers, external data sources), so the only credential in it
-  # is the OIDC role; no Telegram secrets and no write token. The PR comment is posted by the separate `comment` job.
+  # is the read-only OIDC role (no S3 writes, no lock); no Telegram secrets and no write token. The PR comment is posted
+  # by the separate `comment` job. On dispatch (main only) it uses the plan role: lock + stash of the tfplan.
   plan:
     needs: check
     if: >-
@@ -79,16 +105,35 @@ jobs:
       id-token: write
     defaults:
       run:
-        working-directory: infra/aws
+        working-directory: infra/envs/prod
     outputs:
       exitcode: ${{ steps.plan.outputs.exitcode }}
+      tfplan_sha256: ${{ steps.stash.outputs.sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # PR -> read role (sub :pull_request); dispatch -> plan role, which trusts only ref:refs/heads/main.
+      # Fail clearly here rather than with an opaque AssumeRole error, and never fall back to the other role.
+      - name: Select CI role
+        id: role
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          READ_ROLE: ${{ vars.AWS_TF_READ_ROLE_ARN }}
+          PLAN_ROLE: ${{ vars.AWS_TF_PLAN_ROLE_ARN }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            var=AWS_TF_READ_ROLE_ARN; arn=$READ_ROLE
+          else
+            [ "$REF" = refs/heads/main ] || { echo "::error::dispatch plan/apply runs only on main (got $REF)"; exit 1; }
+            var=AWS_TF_PLAN_ROLE_ARN; arn=$PLAN_ROLE
+          fi
+          [ -n "$arn" ] || { echo "::error::repo variable $var is not set"; exit 1; }
+          echo "arn=$arn" >> "$GITHUB_OUTPUT"
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume: ${{ vars.AWS_TF_ROLE_ARN }}
+          role-to-assume: ${{ steps.role.outputs.arn }}
           aws-region: ${{ vars.AWS_REGION }}
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
@@ -115,15 +160,18 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: plan-text
-          path: infra/aws/plan.txt
+          path: infra/envs/prod/plan.txt
           retention-days: 5
       # tfplan embeds prior state (incl. sensitive values); never publish it as an artifact on a public repo.
-      - name: Stash plan in state bucket (dispatch only)
-        if: github.event_name == 'workflow_dispatch'
+      # The sha256 travels as a job output (not via S3), so apply refuses a stash that was swapped after this job.
+      - name: Stash plan in state bucket (dispatch apply with changes only)
+        id: stash
+        if: github.event_name == 'workflow_dispatch' && inputs.action == 'apply' && steps.plan.outputs.exitcode == '2'
         env:
           TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
           RUN_ID: ${{ github.run_id }}
         run: |
+          echo "sha256=$(sha256sum tfplan | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
           aws s3 cp tfplan "s3://$TF_STATE_BUCKET/plans/$RUN_ID.tfplan"
       - uses: ./.github/actions/telegram-notify
         if: github.event_name == 'workflow_dispatch' && inputs.action == 'apply' && steps.plan.outputs.exitcode == '2'
@@ -131,7 +179,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         with:
-          message: "⏳ infra/aws apply is waiting for your <b>prod</b> approval — <a href=\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\">approve</a>"
+          message: "⏳ infra/envs/prod apply is waiting for your <b>prod</b> approval — <a href=\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\">approve</a>"
 
   # Fresh runner, no PR code executed: the write token never shares a VM with PR-authored Terraform.
   comment:
@@ -153,7 +201,7 @@ jobs:
           marker='<!-- infra-plan -->'
           {
             echo "$marker"
-            echo "### terraform plan (infra/aws) — exit code 2 (changes)"
+            echo "### terraform plan (infra/envs/prod) — exit code 2 (changes)"
             echo
             echo '```'
             tail -c 60000 plan.txt
@@ -178,7 +226,7 @@ jobs:
       id-token: write
     defaults:
       run:
-        working-directory: infra/aws
+        working-directory: infra/envs/prod
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -203,6 +251,15 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           aws s3 cp "s3://$TF_STATE_BUCKET/plans/$RUN_ID.tfplan" tfplan
+      - name: Verify plan integrity
+        env:
+          EXPECTED_SHA256: ${{ needs.plan.outputs.tfplan_sha256 }}
+        run: |
+          actual=$(sha256sum tfplan | cut -d' ' -f1)
+          if [ -z "$EXPECTED_SHA256" ] || [ "$actual" != "$EXPECTED_SHA256" ]; then
+            echo "::error::stashed tfplan sha256 $actual does not match the plan job's ${EXPECTED_SHA256:-<none>}; refusing to apply"
+            exit 1
+          fi
       - run: terraform apply -input=false tfplan
       - run: terraform output >> "$GITHUB_STEP_SUMMARY"
       - uses: ./.github/actions/telegram-notify
@@ -211,11 +268,11 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         with:
-          message: "✅ infra/aws applied (run ${{ github.run_id }})"
+          message: "✅ infra/envs/prod applied (run ${{ github.run_id }})"
       - uses: ./.github/actions/telegram-notify
         if: failure()
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         with:
-          message: "❌ <b>infra/aws apply FAILED</b> — <a href=\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\">logs</a>. Suggested first step: re-run once (IAM propagation); if it fails again, open the log and do not re-dispatch."
+          message: "❌ <b>infra/envs/prod apply FAILED</b> — <a href=\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\">logs</a>. Suggested first step: re-run once (IAM propagation); if it fails again, open the log and do not re-dispatch."
