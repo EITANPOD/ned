@@ -102,3 +102,53 @@ run "bedrock_logging_role_trust_is_conditioned" {
     error_message = "logging role must carry the ned-role-boundary"
   }
 }
+
+run "rejects_bad_account_id" {
+  command = plan
+
+  variables {
+    account_id = "12345"
+  }
+
+  expect_failures = [var.account_id]
+}
+
+run "rejects_bad_log_retention" {
+  command = plan
+
+  variables {
+    log_retention_days = 15
+  }
+
+  expect_failures = [var.log_retention_days]
+}
+
+run "rejects_bad_user_boundary" {
+  command = plan
+
+  variables {
+    user_boundary_arn = "ned-user-boundary"
+  }
+
+  expect_failures = [var.user_boundary_arn]
+}
+
+run "rejects_bad_role_boundary" {
+  command = plan
+
+  variables {
+    role_boundary_arn = "ned-role-boundary"
+  }
+
+  expect_failures = [var.role_boundary_arn]
+}
+
+run "rejects_empty_model_list" {
+  command = plan
+
+  variables {
+    allowed_model_ids = []
+  }
+
+  expect_failures = [var.allowed_model_ids]
+}

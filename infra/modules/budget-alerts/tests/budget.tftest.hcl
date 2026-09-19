@@ -52,3 +52,33 @@ run "sns_topic_named" {
     error_message = "SNS topic must be ned-budget-alerts"
   }
 }
+
+run "rejects_zero_limit" {
+  command = plan
+
+  variables {
+    limit_usd = 0
+  }
+
+  expect_failures = [var.limit_usd]
+}
+
+run "rejects_bad_email" {
+  command = plan
+
+  variables {
+    email = "not-an-email"
+  }
+
+  expect_failures = [var.email]
+}
+
+run "rejects_bad_account_id" {
+  command = plan
+
+  variables {
+    account_id = "12345"
+  }
+
+  expect_failures = [var.account_id]
+}
