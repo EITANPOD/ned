@@ -7,9 +7,12 @@ alert topic. Composes `../../modules/bedrock-runtime` and
 
 ## How CI runs it
 
-The infra workflow plans on PRs/main and applies the saved plan behind the
-`prod` environment approval (see `.github/workflows/`; retargeted from
-`infra/aws` to this directory in the same restructure). Init is partial:
+`.github/workflows/infra-aws.yml` runs here. PR plans assume the read role
+(`AWS_TF_READ_ROLE_ARN`, `-lock=false`, nothing stashed); a dispatch on `main`
+plans with the plan role (`AWS_TF_PLAN_ROLE_ARN`, locked) and stashes the
+tfplan to `plans/<run_id>.tfplan`; the apply job (`AWS_TF_ROLE_ARN`, behind
+the `prod` environment approval) refuses the stash unless its sha256 matches
+the plan job's output. Init is partial:
 
 ```sh
 terraform init -backend-config="bucket=$TF_STATE_BUCKET" -backend-config="region=$AWS_REGION"
@@ -29,8 +32,8 @@ and the `moved` blocks rely on reading the existing state.
 ## Migration (`moved.tf`)
 
 Every `infra/aws` resource moves in place; expected plan is 0 to add, 0 to
-destroy. Expected in-place diff: the SNS topic policy gains the sns module's
-default account-owner statement.
+destroy. Expected in-place diff: the SNS topic policy statement gains a `Sid`
+(budget-alerts sets `enable_default_topic_policy = false`, so no owner statement).
 
 | Old (`infra/aws`) | New (`infra/envs/prod`) |
 |---|---|

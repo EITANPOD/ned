@@ -19,12 +19,12 @@ while IFS=$'\t' read -r status path newpath || [ -n "${status:-}" ]; do
       ;;
   esac
   case "$path" in
-    infra/bootstrap/*) touches_infra=true; bump high "infra/bootstrap changed ($path)";;
+    # CI trust roots: the state bucket, OIDC provider, CI roles and boundaries (infra/bootstrap = pre-0c path).
+    infra/envs/bootstrap/*|infra/modules/github-ci-role/*|infra/bootstrap/*) touches_infra=true; bump high "CI trust root changed ($path)";;
     .github/workflows/guard.yml|.github/actions/*|.github/scripts/*) bump high "guard/notify tooling changed ($path)";;
     # evidence producers: the plan text and the Claude verdict the guard trusts
     .github/workflows/infra-aws.yml|.github/workflows/claude-review.yml) bump high "guard evidence workflow changed ($path)";;
     .claude/*|CLAUDE.md|.coderabbit.yaml|.github/CODEOWNERS) bump high "agent/reviewer rules changed ($path)";;
-    infra/aws/*) touches_infra=true; bump medium "infra/aws changed ($path)";;
     infra/*) touches_infra=true; bump medium "infra changed ($path)";;
     .github/workflows/*) bump medium "workflow changed ($path)";;
     deploy/*) bump medium "deploy changed ($path)";;

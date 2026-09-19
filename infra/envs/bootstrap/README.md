@@ -18,7 +18,7 @@ State key: `bootstrap/terraform.tfstate` in the state bucket itself (partial S3 
 |--------|-----|
 | `ci_role_arn` | repo variable `AWS_TF_ROLE_ARN` (apply job) |
 | `plan_role_arn` | repo variable `AWS_TF_PLAN_ROLE_ARN` (main-branch plan job) |
-| `read_role_arn` | PR plan job |
+| `read_role_arn` | repo variable `AWS_TF_READ_ROLE_ARN` (PR plan job) |
 | `state_bucket` | repo variable `TF_STATE_BUCKET` |
 | `user_boundary_arn`, `role_boundary_arn` | boundaries every CI-created user / role must carry |
 
@@ -50,7 +50,11 @@ terraform plan    # review: never apply a plan with destroys you did not intend
 terraform apply
 ```
 
-Then set the repo variables from the outputs table (`terraform output -raw ci_role_arn`, ...).
+Then set the repo variables from the outputs table: `AWS_TF_ROLE_ARN` (`terraform output -raw ci_role_arn`),
+`AWS_TF_PLAN_ROLE_ARN` (`terraform output -raw plan_role_arn`) and `AWS_TF_READ_ROLE_ARN`
+(`terraform output -raw read_role_arn`). In the same rollout `.github/workflows/infra-aws.yml` switches its
+plan jobs to the new roles: PR plans assume the read role, dispatch plans on `main` the plan role, and apply
+keeps `AWS_TF_ROLE_ARN`. Follow the rollout order in [`infra/README.md`](../../README.md#migration-from-the-flat-roots-phase-0c).
 
 ## Migration from `infra/bootstrap`
 

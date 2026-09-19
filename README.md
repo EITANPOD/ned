@@ -6,16 +6,16 @@ Design: [docs/superpowers/specs/2026-09-18-ned-design.md](docs/superpowers/specs
 
 ## Status
 
-Phase 0 (infra bootstrap + AWS runtime via Terraform in GitHub Actions) and Phase 0b (guardrails: risk-tiered `guard` gate, reviewer verdicts, Telegram alerts, agent deny-list) are live. Next: Phase 0c, IaC restructure into `infra/modules` + `infra/envs`. See [Infra](#infra).
+Phase 0 (infra bootstrap + AWS runtime via Terraform in GitHub Actions) and Phase 0b (guardrails: risk-tiered `guard` gate, reviewer verdicts, Telegram alerts, agent deny-list) are live. Phase 0c restructures IaC into `infra/modules` + `infra/envs` (see [infra/README.md](infra/README.md)). See [Infra](#infra).
 
 ## Infra
 
-All Terraform runs in GitHub Actions, with one exception: `infra/bootstrap` is applied from a laptop once (see runbook) because CI cannot authenticate before the OIDC role exists.
+All Terraform runs in GitHub Actions, with one exception: `infra/envs/bootstrap` is applied from a laptop (see runbook) because CI cannot authenticate before the OIDC roles exist.
 
-| Root module        | State key                     | Trigger                                   |
-|--------------------|-------------------------------|-------------------------------------------|
-| `infra/bootstrap`  | `bootstrap/terraform.tfstate` | local, one time (see runbook) |
-| `infra/aws`        | `aws/terraform.tfstate`       | PR → plan comment; manual dispatch → apply (gated by env `prod`) |
+| Root module            | State key                     | Trigger                                   |
+|------------------------|-------------------------------|-------------------------------------------|
+| `infra/envs/bootstrap` | `bootstrap/terraform.tfstate` | local, by the maintainer (see runbook) |
+| `infra/envs/prod`      | `aws/terraform.tfstate`       | PR → plan comment (read role); manual dispatch on `main` → apply (gated by env `prod`) |
 
 Local checks only: `pre-commit run --all-files`, `terraform test` (mock provider, no creds).
 
@@ -57,24 +57,13 @@ Test the bot: Actions → `telegram-ping` → Run.
 
 ### First-time bootstrap runbook
 
-Bootstrap is the one Terraform module applied from a laptop, once, because CI cannot authenticate before the OIDC role exists. It creates: the state bucket, the GitHub OIDC provider, and the CI role `ned-github-terraform`.
+The commands live in [infra/envs/bootstrap/README.md](infra/envs/bootstrap/README.md); layout, roles and the migration rollout in [infra/README.md](infra/README.md).
 
 1. Repo variables: `AWS_ACCOUNT_ID`, `AWS_REGION=us-east-1`, `TF_STATE_BUCKET=ned-tfstate-<account-id>`, `BUDGET_EMAIL=<you>`.
-2. Local, with your admin profile. Get the ids with `gh api repos/<owner>/<repo> -q '.owner.id, .id'`.
-
-   ```bash
-   cd infra/bootstrap
-   printf 'terraform {\n  backend "local" {}\n}\n' > zz_local_override.tf
-   export AWS_PROFILE=<admin-profile> TF_VAR_github_repo=<owner>/<repo> TF_VAR_github_owner_id=<owner-id> TF_VAR_github_repo_id=<repo-id> TF_VAR_aws_region=us-east-1 TF_VAR_state_bucket_name=ned-tfstate-<account-id>
-   terraform init -reconfigure && terraform apply
-   rm zz_local_override.tf
-   terraform init -migrate-state -force-copy -backend-config="bucket=$TF_VAR_state_bucket_name" -backend-config="region=$TF_VAR_aws_region"
-   rm -f terraform.tfstate terraform.tfstate.backup
-   ```
-
-3. Set repo variable `AWS_TF_ROLE_ARN` from `terraform output -raw ci_role_arn`. Re-apply `infra/bootstrap` locally whenever it changes (same commands, no override file needed once state is in S3).
-4. Create environment `prod` with yourself as required reviewer. Branch protection on `main`: require PR + `lint` and `check` status checks.
-5. Open a PR touching `infra/aws/` → plan appears as a PR comment. Merge.
-6. Actions → `infra-aws` → Run workflow with `action=apply` → approve the `prod` deployment → resources created. If it fails on the Bedrock logging configuration with an IAM validation error, re-run the apply once (IAM propagation).
+2. Apply `infra/envs/bootstrap` locally with your admin profile (first time: local state, then migrate it into the bucket). Re-apply it locally whenever it changes.
+3. Set repo variables from its outputs: `AWS_TF_ROLE_ARN` (`ci_role_arn`), `AWS_TF_PLAN_ROLE_ARN` (`plan_role_arn`), `AWS_TF_READ_ROLE_ARN` (`read_role_arn`).
+4. Create environment `prod` with yourself as required reviewer. Branch protection on `main`: require PR + `lint` and `check` status checks (`module-tests (<module>)` can be added once it has run on `main`).
+5. Open a PR touching `infra/` → plan of `infra/envs/prod` (read role) appears as a PR comment. Merge.
+6. Actions → `infra-aws` → Run workflow on `main` with `action=apply` → approve the `prod` deployment → resources created. If it fails on the Bedrock logging configuration with an IAM validation error, re-run the apply once (IAM propagation).
 
 Runtime credentials for Ned are in SSM: `/ned/runtime/aws_access_key_id`, `/ned/runtime/aws_secret_access_key` (SecureString). They are reserved for the Phase 8 deploy job; nothing reads them yet.

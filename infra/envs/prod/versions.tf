@@ -16,7 +16,7 @@ provider "aws" {
     tags = {
       Project   = "ned"
       ManagedBy = "terraform"
-      # ponytail: kept as "aws" (the old root's name) so migrating adds no tag drift.
+      # Kept as "aws" (the old root's name) so default tags don't drift during the migration.
       Module = "aws"
     }
   }
