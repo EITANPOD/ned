@@ -22,3 +22,8 @@ output "budget_alerts_topic_arn" {
   description = "ARN of the budget alerts SNS topic."
   value       = module.budget_alerts.topic_arn
 }
+
+output "telegram_approver_url" {
+  description = "Public Lambda function URL Telegram posts callback_query webhooks to."
+  value       = module.telegram_approver.function_url
+}
