@@ -25,6 +25,7 @@ Every non-draft PR gets two automated reviews:
 - **Claude Code Action** (`claude-review.yml`) — reads `CLAUDE.md`, posts one sticky verdict comment + inline defects. Auth: `CLAUDE_CODE_OAUTH_TOKEN` secret from `claude setup-token` (Pro/Max subscription).
 - **CodeRabbit** — free on public repos, config in `.coderabbit.yaml`.
 Dependabot PRs are skipped by Claude (no secrets on those runs).
+Dependabot runs Sundays 09:00 (Asia/Jerusalem) and only proposes releases at least 7 days old (`cooldown`), so a compromised version is usually yanked before it reaches a PR.
 CodeRabbit only auto-reviews repos with 10+ stars; below that, comment `@coderabbitai review` on the PR to trigger it.
 
 ### Guardrails (guard check)
