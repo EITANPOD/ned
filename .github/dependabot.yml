@@ -1,26 +1,58 @@
 version: 2
+# Every entry: one fixed weekly slot, and a 7-day cooldown so a release must survive a week in the wild
+# before it is proposed (most malicious package versions are yanked within days).
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+      day: sunday
+      time: "09:00"
+      timezone: Asia/Jerusalem
+    cooldown:
+      default-days: 7
   - package-ecosystem: terraform
     directory: /infra/envs/bootstrap
     schedule:
       interval: weekly
+      day: sunday
+      time: "09:00"
+      timezone: Asia/Jerusalem
+    cooldown:
+      default-days: 7
   - package-ecosystem: terraform
     directory: /infra/envs/prod
     schedule:
       interval: weekly
+      day: sunday
+      time: "09:00"
+      timezone: Asia/Jerusalem
+    cooldown:
+      default-days: 7
   - package-ecosystem: terraform
     directory: /infra/modules/github-ci-role
     schedule:
       interval: weekly
+      day: sunday
+      time: "09:00"
+      timezone: Asia/Jerusalem
+    cooldown:
+      default-days: 7
   - package-ecosystem: terraform
     directory: /infra/modules/bedrock-runtime
     schedule:
       interval: weekly
+      day: sunday
+      time: "09:00"
+      timezone: Asia/Jerusalem
+    cooldown:
+      default-days: 7
   - package-ecosystem: terraform
     directory: /infra/modules/budget-alerts
     schedule:
       interval: weekly
+      day: sunday
+      time: "09:00"
+      timezone: Asia/Jerusalem
+    cooldown:
+      default-days: 7
