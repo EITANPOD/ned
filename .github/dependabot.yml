@@ -2,7 +2,7 @@ version: 2
 # Every entry: one fixed weekly slot, and a 7-day cooldown so a release must survive a week in the wild
 # before it is proposed (most malicious package versions are yanked within days).
 # PAUSED: version-update PRs are disabled (limit 0) while development is on hold; each PR sends the owner ~5 emails
-# (review request, PR body, CodeRabbit, guard, merge/close). Remove the limit lines to resume. Security updates are unaffected.
+# (review request, PR body, bot comments, merge/close). Remove the limit lines to resume. Security updates are unaffected.
 updates:
   - package-ecosystem: github-actions
     directory: /

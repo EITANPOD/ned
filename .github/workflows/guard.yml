@@ -89,7 +89,6 @@ jobs:
           { echo "title<<$d"; jq -r .title pr.json; echo "$d"; } >> "$GITHUB_OUTPUT"
           # One array each (pages merged); read by Verdicts and by guard-marked.sh.
           gh api "repos/$REPO/issues/$PR/comments" --paginate | jq -s add > comments.json
-          gh api "repos/$REPO/pulls/$PR/reviews" --paginate | jq -s add > reviews.json
 
       - name: Fork PR note
         if: steps.pr.outputs.fork == 'true'
@@ -167,7 +166,7 @@ jobs:
         env:
           HEAD_SHA: ${{ steps.pr.outputs.head }}
           HEAD_TIME: ${{ steps.pr.outputs.head_time }}
-        run: COMMENTS_JSON=comments.json REVIEWS_JSON=reviews.json bash .github/scripts/guard-verdicts.sh | tee -a "$GITHUB_OUTPUT"
+        run: COMMENTS_JSON=comments.json bash .github/scripts/guard-verdicts.sh | tee -a "$GITHUB_OUTPUT"
 
       # Verdicts first: a HUMAN REVIEW REQUIRED verdict raises the tier.
       - name: Classify
@@ -191,14 +190,13 @@ jobs:
           TIER: ${{ steps.tier.outputs.tier }}
           REASONS: ${{ steps.tier.outputs.reasons }}
           CLAUDE_V: ${{ steps.verdicts.outputs.claude }}
-          CR_V: ${{ steps.verdicts.outputs.coderabbit }}
           APPROVED: ${{ steps.labels.outputs.approved }}
           DESTROY_OK: ${{ steps.labels.outputs.destroy_ok }}
         run: |
           {
             echo "## guard: tier **$TIER**"
             echo "- reasons: $REASONS"
-            echo "- claude: $CLAUDE_V · coderabbit: $CR_V"
+            echo "- claude: $CLAUDE_V"
             echo "- human-approved: $APPROVED · allow-destroy: $DESTROY_OK"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -226,7 +224,7 @@ jobs:
           message: |
             ${{ steps.tier.outputs.tier == 'high' && '🛑 <b>HIGH</b>' || '🟠 <b>MEDIUM</b>' }} | PR #${{ env.PR }} {1}
             Why: {2}
-            Reviewers: claude=${{ steps.verdicts.outputs.claude }}, coderabbit=${{ steps.verdicts.outputs.coderabbit }}
+            Reviewer: claude=${{ steps.verdicts.outputs.claude }}
             Suggested fix: {3}
             <a href="${{ github.server_url }}/${{ github.repository }}/pull/${{ env.PR }}">PR</a> · approve by adding label <code>human-approved</code>${{ steps.tier.outputs.destroys != '0' && ' + <code>allow-destroy</code>' || '' }}
           arg1: ${{ steps.pr.outputs.title }}
@@ -251,17 +249,15 @@ jobs:
           TIER: ${{ steps.tier.outputs.tier }}
           DESTROYS: ${{ steps.tier.outputs.destroys }}
           CLAUDE_V: ${{ steps.verdicts.outputs.claude }}
-          CR_V: ${{ steps.verdicts.outputs.coderabbit }}
           ACTOR: ${{ steps.pr.outputs.actor }}
           APPROVED: ${{ steps.labels.outputs.approved }}
           DESTROY_OK: ${{ steps.labels.outputs.destroy_ok }}
           DRAFT: ${{ steps.pr.outputs.draft }}
           FORK: ${{ steps.pr.outputs.fork }}
         run: |
-          # Low is clean when Claude passed this head (Dependabot: Claude skipped by design) and CodeRabbit has
-          # no findings on this head. CodeRabbit 'missing' does not block: it needs a manual trigger on small repos.
+          # Low is clean when Claude passed this head (Dependabot: Claude skipped by design).
           clean=false
-          if { [ "$CLAUDE_V" = pass ] || [ "$ACTOR" = "dependabot[bot]" ]; } && [ "$CR_V" != findings ]; then clean=true; fi
+          if [ "$CLAUDE_V" = pass ] || [ "$ACTOR" = "dependabot[bot]" ]; then clean=true; fi
           armed=false
           if [ "$TIER" = low ] && [ "$clean" = true ] && [ "$DRAFT" = false ] && [ "$FORK" = false ]; then
             gh pr merge "$PR" --auto --squash --match-head-commit "$HEAD" >/dev/null
@@ -303,7 +299,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         with:
           silent: "true"
-          message: "🟢 low | PR #${{ env.PR }} {1} — auto-merge armed (claude=${{ steps.verdicts.outputs.claude }}, coderabbit=${{ steps.verdicts.outputs.coderabbit }})"
+          message: "🟢 low | PR #${{ env.PR }} {1} — auto-merge armed (claude=${{ steps.verdicts.outputs.claude }})"
           arg1: ${{ steps.pr.outputs.title }}
 
       - name: Mark digested
