@@ -1,6 +1,6 @@
 module "topic" {
   source  = "terraform-aws-modules/sns/aws"
-  version = "7.1.1"
+  version = "7.2.0"
 
   name            = var.topic_name
   use_name_prefix = false
