@@ -25,7 +25,7 @@ while IFS=$'\t' read -r status path newpath || [ -n "${status:-}" ]; do
     .github/workflows/guard.yml|.github/actions/*|.github/scripts/*) bump high "guard/notify tooling changed ($path)";;
     # evidence producers: the plan text and the Claude verdict the guard trusts
     .github/workflows/infra-aws.yml|.github/workflows/claude-review.yml) bump high "guard evidence workflow changed ($path)";;
-    .claude/*|CLAUDE.md|.coderabbit.yaml|.github/CODEOWNERS) bump high "agent/reviewer rules changed ($path)";;
+    .claude/*|CLAUDE.md|.github/CODEOWNERS) bump high "agent/reviewer rules changed ($path)";;
     infra/*) touches_infra=true; infra_paths+=("$path");;
     .github/workflows/*) bump medium "workflow changed ($path)";;
     deploy/*) bump medium "deploy changed ($path)";;

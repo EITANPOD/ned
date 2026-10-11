@@ -35,7 +35,7 @@ cannot re-acquire any role.
   triggered by `push`, `pull_request_target`, `workflow_run` or `schedule` runs with ref `refs/heads/main`,
   so an OIDC token it mints matches the plan role's trust (`ref:refs/heads/main`). `guard.yml` runs
   `main`'s code with PR data and must never get it. A workflow gaining `id-token: write` is a STOP
-  condition for reviewers (`CLAUDE.md`, `.coderabbit.yaml`).
+  condition for reviewers (`CLAUDE.md`).
 
 ### Known credential exposure (accepted, tracked)
 
