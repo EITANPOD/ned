@@ -39,11 +39,13 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 2 # the PR merge commit and its parents
-      # Does this PR touch infra/? HEAD^1 is the base tip, so HEAD^1..HEAD is exactly what the PR brings.
+      # Does this PR touch infra/ or the deployed Lambda's source? HEAD^1 is the base tip, so
+      # HEAD^1..HEAD is exactly what the PR brings. apps/telegram-approver/** is packaged by
+      # infra/modules/telegram-approver's archive_file, so its source must plan too.
       - id: changed
         if: github.event_name == 'pull_request'
         run: |
-          if git diff --name-only HEAD^1 HEAD | grep -q '^infra/'; then v=true; else v=false; fi
+          if git diff --name-only HEAD^1 HEAD | grep -qE '^(infra|apps/telegram-approver)/'; then v=true; else v=false; fi
           echo "infra_changed=$v" >> "$GITHUB_OUTPUT"
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
@@ -78,7 +80,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [github-ci-role, bedrock-runtime, budget-alerts]
+        module: [github-ci-role, bedrock-runtime, budget-alerts, telegram-approver]
     env:
       MODULE: ${{ matrix.module }}
     steps:
@@ -171,8 +173,10 @@ jobs:
           TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
           RUN_ID: ${{ github.run_id }}
         run: |
-          echo "sha256=$(sha256sum tfplan | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-          aws s3 cp tfplan "s3://$TF_STATE_BUCKET/plans/$RUN_ID.tfplan"
+          # tfplan + plan-time build outputs (Lambda zip) travel together; the sha covers both.
+          tar -cf bundle.tar tfplan .build
+          echo "sha256=$(sha256sum bundle.tar | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          aws s3 cp bundle.tar "s3://$TF_STATE_BUCKET/plans/$RUN_ID.tar"
       - uses: ./.github/actions/telegram-notify
         if: github.event_name == 'workflow_dispatch' && inputs.action == 'apply' && steps.plan.outputs.exitcode == '2'
         env:
@@ -250,16 +254,18 @@ jobs:
           TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
           RUN_ID: ${{ github.run_id }}
         run: |
-          aws s3 cp "s3://$TF_STATE_BUCKET/plans/$RUN_ID.tfplan" tfplan
+          aws s3 cp "s3://$TF_STATE_BUCKET/plans/$RUN_ID.tar" bundle.tar
       - name: Verify plan integrity
         env:
           EXPECTED_SHA256: ${{ needs.plan.outputs.tfplan_sha256 }}
         run: |
-          actual=$(sha256sum tfplan | cut -d' ' -f1)
+          actual=$(sha256sum bundle.tar | cut -d' ' -f1)
           if [ -z "$EXPECTED_SHA256" ] || [ "$actual" != "$EXPECTED_SHA256" ]; then
-            echo "::error::stashed tfplan sha256 $actual does not match the plan job's ${EXPECTED_SHA256:-<none>}; refusing to apply"
+            echo "::error::stashed plan bundle sha256 $actual does not match the plan job's ${EXPECTED_SHA256:-<none>}; refusing to apply"
             exit 1
           fi
+      # tfplan + .build (plan-time Lambda zip) came from tar -cf bundle.tar tfplan .build; extract both before apply.
+      - run: tar -xf bundle.tar
       - run: terraform apply -input=false tfplan
       - run: terraform output >> "$GITHUB_STEP_SUMMARY"
       - uses: ./.github/actions/telegram-notify

@@ -29,3 +29,4 @@ jobs:
       - run: pipx install pre-commit
       - run: pre-commit run --all-files --show-diff-on-failure
       - run: bash tests/guard/run.sh
+      - run: python3 -m unittest discover -s apps/telegram-approver -v
