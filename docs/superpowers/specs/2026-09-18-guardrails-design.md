@@ -2,7 +2,7 @@
 
 ## Context
 
-Ned's code is written mostly by AI agents (Claude Code sessions) and reviewed by AI reviewers (Claude Code Action, CodeRabbit). Phase 0 showed the failure modes: a CI role that could rewrite itself, plan files with secrets in public artifacts, a stray session committing to the working branch. Eitan wants independent automation for routine work and a hard stop plus a Telegram alert, with a suggested fix, whenever something unusual happens. Humans approve only the dangerous slice.
+Ned's code is written mostly by AI agents (Claude Code sessions) and reviewed by an AI reviewer (Claude Code Action). Phase 0 showed the failure modes: a CI role that could rewrite itself, plan files with secrets in public artifacts, a stray session committing to the working branch. Eitan wants independent automation for routine work and a hard stop plus a Telegram alert, with a suggested fix, whenever something unusual happens. Humans approve only the dangerous slice.
 
 Decisions:
 - Risk tiers decide what is automatic. **Low → auto-merge. Medium → alert + `human-approved` label. High → blocked + alert; destroys also need `allow-destroy`.**
@@ -14,9 +14,9 @@ Decisions:
 
 | Tier | Triggered by any of | Merge policy | Alert |
 |---|---|---|---|
-| **Low** | only paths under `apps/**`, `docs/**`, `tests/**`, `README.md`, `.github/dependabot.yml`; Dependabot minor/patch bumps; no deletions of files under `infra/**` or `.github/**` | auto-merge (squash) once all required checks are green and the PR is clean for its current head: Claude `VERDICT: PASS` (Dependabot PRs: Claude is skipped by design, not required) and CodeRabbit without findings on this head (no CodeRabbit review does not block: it needs a manual trigger on repos under 10 stars) | one-line silent digest when auto-merge is armed, once per head |
+| **Low** | only paths under `apps/**`, `docs/**`, `tests/**`, `README.md`, `.github/dependabot.yml`; Dependabot minor/patch bumps; no deletions of files under `infra/**` or `.github/**` | auto-merge (squash) once all required checks are green and the PR is clean for its current head: Claude `VERDICT: PASS` (Dependabot PRs: Claude is skipped by design, not required) | one-line silent digest when auto-merge is armed, once per head |
 | **Medium** | `infra/aws/**` changes whose plan has adds/changes only; `.github/workflows/**` (except the guard and evidence workflows); Dependabot major bumps; `deploy/**`; any unclassified path; Claude `VERDICT: HUMAN REVIEW REQUIRED` | wait for label `human-approved` | alert with tier reasons, reviewer suggested fix, one-tap links |
-| **High** | Terraform plan with ≥1 destroy; infra change with no plan; `infra/bootstrap/**`; `.github/workflows/guard.yml`, `.github/actions/**`, `.github/scripts/**`; the evidence producers `.github/workflows/infra-aws.yml` (plan text) and `.github/workflows/claude-review.yml` (verdict); `.claude/**`, `CLAUDE.md`, `.coderabbit.yaml`, `.github/CODEOWNERS`; deletions or renames out of `infra/**`/`.github/**`; force-push detected on the PR branch | blocked; needs `human-approved` (+ `allow-destroy` when destroys) | alert as Medium, marked HIGH |
+| **High** | Terraform plan with ≥1 destroy; infra change with no plan; `infra/bootstrap/**`; `.github/workflows/guard.yml`, `.github/actions/**`, `.github/scripts/**`; the evidence producers `.github/workflows/infra-aws.yml` (plan text) and `.github/workflows/claude-review.yml` (verdict); `.claude/**`, `CLAUDE.md`, `.github/CODEOWNERS`; deletions or renames out of `infra/**`/`.github/**`; force-push detected on the PR branch | blocked; needs `human-approved` (+ `allow-destroy` when destroys) | alert as Medium, marked HIGH |
 
 The highest matching tier wins. Secrets are not a tier: gitleaks runs in pre-commit, so a hit fails `lint`, a required check, and blocks the merge on its own. Labels are created by the guard on first run (`tier:low|medium|high`, `human-approved`, `allow-destroy`, `needs-human`).
 
@@ -30,7 +30,7 @@ Steps:
 1. PR facts (head, base, author, draft, fork, `HEAD_TIME`); comments and reviews fetched once.
 2. Changed paths via `git diff --name-status --no-renames base...head`; force push = the event's `before` is gone or not an ancestor of the head, recorded with a marker comment so it stays sticky for that head.
 3. For infra PRs, read the `plan-text` artifact of the completed `infra-aws` run for this head SHA; parse `Plan: A to add, C to change, D to destroy[, F to forget]`; D>0 → High; `destroys=D` is an output.
-4. Reviewer verdicts (before classification): Claude counts only from `claude[bot]` (type `Bot`) with the comment written or updated after `HEAD_TIME`, and only on a line-anchored `VERDICT:` line; CodeRabbit counts only for a review whose `commit_id` is the head. Values: `claude=pass|human|missing`, `coderabbit=clean|findings|missing`. `human` raises the tier to at least Medium and its `Suggested fix:` goes into the alert.
+4. Reviewer verdicts (before classification): Claude counts only from `claude[bot]` (type `Bot`) with the comment written or updated after `HEAD_TIME`, and only on a line-anchored `VERDICT:` line. Values: `claude=pass|human|missing`. `human` raises the tier to at least Medium and its `Suggested fix:` goes into the alert.
 5. Classify; apply labels; write a job summary.
 6. Decision: Low + clean (see table) + not draft + not fork → `gh pr merge --auto --squash --match-head-commit <head>`; otherwise `gh pr merge --disable-auto` (no-op when not armed). An infra change without a plan for this head → exit 1 ("waiting for terraform plan") whatever the labels. Medium/High → exit 1 unless the required labels are valid; `allow-destroy` is required when `destroys > 0`.
 7. Labels are valid only if the last `labeled` event is by a non-bot repo admin and newer than `HEAD_TIME`; otherwise the guard strips them. Every push also strips them (UX; the timestamp rule holds even if that step is cancelled).
@@ -49,7 +49,7 @@ Approve: <label link>   PR: <url>
 ```
 
 ### 3. Reviewer STOP rules
-`CLAUDE.md` gains a "STOP conditions" section. The Claude review verdict line is mandatory and machine-readable: `VERDICT: PASS` or `VERDICT: HUMAN REVIEW REQUIRED`, followed by `Suggested fix:` when not PASS. STOP conditions: IAM trust/boundary/CI-role changes; wildcard resources or actions; secrets or tokens in diff; workflow permission widening or unpinned actions; deletion of tests; disabling a check; Terraform destroys; changes to guard/notify/CLAUDE.md/.claude. `.coderabbit.yaml` path instructions mirror the list. Claude's prompt in `claude-review.yml` is updated to require the verdict line.
+`CLAUDE.md` gains a "STOP conditions" section. The Claude review verdict line is mandatory and machine-readable: `VERDICT: PASS` or `VERDICT: HUMAN REVIEW REQUIRED`, followed by `Suggested fix:` when not PASS. STOP conditions: IAM trust/boundary/CI-role changes; wildcard resources or actions; secrets or tokens in diff; workflow permission widening or unpinned actions; deletion of tests; disabling a check; Terraform destroys; changes to guard/notify/CLAUDE.md/.claude. Claude's prompt in `claude-review.yml` is updated to require the verdict line.
 
 ### 4. Agent-side guardrails (`.claude/` in repo)
 - `.claude/settings.json` `permissions.deny`: `terraform apply|destroy|import|state rm|state push|state mv|force-unlock|taint|untaint`, `gh pr edit`, `gh issue edit`, `gh api graphql`, `git push --force|-f`, `git reset --hard`, `git branch -D`, `rm -rf`, `gh pr merge`, `gh secret`, `gh variable set`, `gh api -X (DELETE|PUT|PATCH)`, `aws iam *`, `aws s3 rm|rb`, `aws ssm put-parameter|delete-parameter`, `aws sts assume-role`. `permissions.allow` for the read-only set used daily (`terraform fmt|validate|test|init`, `gh pr view|checks|diff`, `aws sts get-caller-identity`, `git status|log|diff`).
@@ -78,7 +78,7 @@ infra-aws (dispatch): apply pending prod ──► Telegram; apply result ──
 
 ## Security
 - The gate runs trusted code only (`pull_request_target`, `main` checkout, PR head read as objects). `infra-aws` PR plans run PR-authored Terraform, so that job holds only the OIDC role: no Telegram secrets and no write token (the plan comment is posted by a separate job that runs no PR code). PR plans run with `-lock=false` and only when `infra/` changes.
-- Only humans can add `human-approved`/`allow-destroy` (guard verifies actor ≠ bot, permission = admin, and label newer than the head). Agents run with `.claude` deny-list + PreToolUse hook; CI tokens have no label-write except the guard job. `CODEOWNERS` names the gate's own paths (`.github/`, `.claude/`, `CLAUDE.md`, `.coderabbit.yaml`, `infra/bootstrap/`); enforcing code-owner review is a branch-protection setting.
+- Only humans can add `human-approved`/`allow-destroy` (guard verifies actor ≠ bot, permission = admin, and label newer than the head). Agents run with `.claude` deny-list + PreToolUse hook; CI tokens have no label-write except the guard job. `CODEOWNERS` names the gate's own paths (`.github/`, `.claude/`, `CLAUDE.md`, `infra/bootstrap/`); enforcing code-owner review is a branch-protection setting.
 - Third-party actions are pinned to full commit SHAs (`# vX.Y.Z` comment); Dependabot updates them.
 - Telegram token only in GitHub secrets; never echoed; notify action masks it.
 - Fork PRs never reach auto-merge (guard skips forks, as the plan job does).
@@ -91,6 +91,6 @@ infra-aws (dispatch): apply pending prod ──► Telegram; apply result ──
 ## Phases
 - **0b.1** notify action + ping + `main`-red alert + Telegram secrets runbook.
 - **0b.2** guard workflow + tier script + tests + labels + repo settings (auto-merge, required check).
-- **0b.3** reviewer STOP rules (CLAUDE.md, claude-review prompt, coderabbit) + infra-aws hooks (destroy alert, apply pending/failed alerts).
+- **0b.3** reviewer STOP rules (CLAUDE.md, claude-review prompt) + infra-aws hooks (destroy alert, apply pending/failed alerts).
 - **0b.4** `.claude` settings + hook + agent rules.
 Each phase = a Low/Medium PR that exercises the guard itself.
