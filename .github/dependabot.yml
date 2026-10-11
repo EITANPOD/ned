@@ -1,6 +1,8 @@
 version: 2
 # Every entry: one fixed weekly slot, and a 7-day cooldown so a release must survive a week in the wild
 # before it is proposed (most malicious package versions are yanked within days).
+# PAUSED: version-update PRs are disabled (limit 0) while development is on hold; each PR sends the owner ~5 emails
+# (review request, PR body, CodeRabbit, guard, merge/close). Remove the limit lines to resume. Security updates are unaffected.
 updates:
   - package-ecosystem: github-actions
     directory: /
@@ -11,6 +13,7 @@ updates:
       timezone: Asia/Jerusalem
     cooldown:
       default-days: 7
+    open-pull-requests-limit: 0
   - package-ecosystem: terraform
     directory: /infra/envs/bootstrap
     schedule:
@@ -20,6 +23,7 @@ updates:
       timezone: Asia/Jerusalem
     cooldown:
       default-days: 7
+    open-pull-requests-limit: 0
   - package-ecosystem: terraform
     directory: /infra/envs/prod
     schedule:
@@ -29,6 +33,7 @@ updates:
       timezone: Asia/Jerusalem
     cooldown:
       default-days: 7
+    open-pull-requests-limit: 0
   - package-ecosystem: terraform
     directory: /infra/modules/github-ci-role
     schedule:
@@ -38,6 +43,7 @@ updates:
       timezone: Asia/Jerusalem
     cooldown:
       default-days: 7
+    open-pull-requests-limit: 0
   - package-ecosystem: terraform
     directory: /infra/modules/bedrock-runtime
     schedule:
@@ -47,6 +53,7 @@ updates:
       timezone: Asia/Jerusalem
     cooldown:
       default-days: 7
+    open-pull-requests-limit: 0
   - package-ecosystem: terraform
     directory: /infra/modules/budget-alerts
     schedule:
@@ -56,3 +63,4 @@ updates:
       timezone: Asia/Jerusalem
     cooldown:
       default-days: 7
+    open-pull-requests-limit: 0
